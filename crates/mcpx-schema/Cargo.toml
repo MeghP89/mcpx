@@ -1,0 +1,14 @@
+[package]
+name = "mcpx-schema"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Schema diffing, classification, and compatibility shimming for MCP tools"
+
+[dependencies]
+mcpx-core = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+strsim = { workspace = true }
+tracing = { workspace = true }

@@ -1,0 +1,25 @@
+[package]
+name = "mcpx"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "MCP Schema Guardian Proxy — runtime breaking change detection, poisoning prevention, and backwards-compatible shimming"
+
+[[bin]]
+name = "mcpx"
+path = "src/main.rs"
+
+[dependencies]
+mcpx-core = { workspace = true }
+mcpx-transport = { workspace = true }
+mcpx-schema = { workspace = true }
+mcpx-poison = { workspace = true }
+mcpx-store = { workspace = true }
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+clap = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+chrono = { workspace = true }
+anyhow = { workspace = true }

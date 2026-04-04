@@ -1,0 +1,14 @@
+[package]
+name = "mcpx-transport"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "stdio and HTTP transport layer for mcpx proxy"
+
+[dependencies]
+mcpx-core = { workspace = true }
+tokio = { workspace = true }
+serde_json = { workspace = true }
+tracing = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }

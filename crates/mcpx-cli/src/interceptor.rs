@@ -1,0 +1,293 @@
+use anyhow::Result;
+use chrono::Utc;
+use mcpx_core::jsonrpc::{Message, Response};
+use mcpx_core::mcp::{InitializeResult, ToolCallParams, ToolsListResult};
+use mcpx_core::snapshot::{ServerBaseline, ToolSnapshot};
+use mcpx_poison::structural;
+use mcpx_schema::classify;
+use mcpx_schema::diff;
+use mcpx_store::Store;
+use mcpx_transport::proxy::{Direction, InterceptFn, InterceptResult, ProxyState};
+use tracing::{debug, error, info, warn};
+
+const MCPX_VERSION: &str = env!("CARGO_PKG_VERSION");
+
+/// Build the interceptor function that the proxy loop calls on every message.
+pub fn build_interceptor() -> Result<InterceptFn> {
+    // Open the store once — the interceptor closure captures it.
+    let store = Store::open_default()?;
+
+    Ok(Box::new(move |raw_msg: &str, direction: Direction, state: &mut ProxyState| {
+        match direction {
+            Direction::ServerToClient => handle_server_message(raw_msg, state, &store),
+            Direction::ClientToServer => handle_client_message(raw_msg, state),
+        }
+    }))
+}
+
+fn handle_server_message(raw: &str, state: &mut ProxyState, store: &Store) -> InterceptResult {
+    let parsed: Message = match serde_json::from_str(raw) {
+        Ok(m) => m,
+        Err(_) => return InterceptResult::Forward(raw.to_string()),
+    };
+
+    match &parsed {
+        Message::Response(resp) => {
+            let id_key = format!("{:?}", resp.id);
+
+            // Check what method this response is for.
+            if let Some(method) = state.pending_requests.remove(&id_key) {
+                match method.as_str() {
+                    "initialize" => {
+                        if let Some(result) = &resp.result {
+                            if let Ok(init) = serde_json::from_value::<InitializeResult>(result.clone()) {
+                                info!(
+                                    server = %init.server_info.name,
+                                    version = ?init.server_info.version,
+                                    protocol = %init.protocol_version,
+                                    "Connected to MCP server"
+                                );
+                                state.server_info = Some(init);
+                            }
+                        }
+                    }
+                    "tools/list" => {
+                        if let Some(result) = &resp.result {
+                            if let Ok(tools_result) = serde_json::from_value::<ToolsListResult>(result.clone()) {
+                                return handle_tools_list(raw, &tools_result, state, store);
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+        _ => {}
+    }
+
+    InterceptResult::Forward(raw.to_string())
+}
+
+fn handle_client_message(raw: &str, state: &mut ProxyState) -> InterceptResult {
+    let parsed: Message = match serde_json::from_str(raw) {
+        Ok(m) => m,
+        Err(_) => return InterceptResult::Forward(raw.to_string()),
+    };
+
+    // Check if client is calling a tool that's been blocked.
+    if let Message::Request(ref req) = parsed {
+        if req.method == "tools/call" {
+            if let Some(params) = &req.params {
+                if let Ok(call) = serde_json::from_value::<ToolCallParams>(params.clone()) {
+                    if state.blocked_tools.contains(&call.name) {
+                        warn!(
+                            tool = %call.name,
+                            "Blocking tools/call — tool has breaking schema changes"
+                        );
+                        let err_response = Response::error(
+                            req.id.clone(),
+                            -32001,
+                            format!(
+                                "[mcpx] Tool '{}' is blocked due to breaking schema changes detected since baseline. \
+                                 Run `mcpx baselines delete <server>` to re-pin, or review changes with `mcpx diff`.",
+                                call.name
+                            ),
+                        );
+                        let json = serde_json::to_string(&err_response).unwrap();
+                        return InterceptResult::Inject(json);
+                    }
+                }
+            }
+        }
+    }
+
+    InterceptResult::Forward(raw.to_string())
+}
+
+fn handle_tools_list(
+    raw: &str,
+    tools_result: &ToolsListResult,
+    state: &mut ProxyState,
+    store: &Store,
+) -> InterceptResult {
+    let server_name = state
+        .server_info
+        .as_ref()
+        .map(|s| s.server_info.name.clone())
+        .unwrap_or_else(|| "unknown".to_string());
+
+    let server_version = state
+        .server_info
+        .as_ref()
+        .and_then(|s| s.server_info.version.clone());
+
+    let protocol_version = state
+        .server_info
+        .as_ref()
+        .map(|s| s.protocol_version.clone())
+        .unwrap_or_else(|| "unknown".to_string());
+
+    // Capture snapshots of all tools.
+    let live_snapshots: Vec<ToolSnapshot> = tools_result
+        .tools
+        .iter()
+        .map(ToolSnapshot::from_definition)
+        .collect();
+
+    let current_baseline = ServerBaseline {
+        server_name: server_name.clone(),
+        server_version: server_version.clone(),
+        protocol_version: protocol_version.clone(),
+        tools: live_snapshots,
+        pinned_at: Utc::now(),
+        mcpx_version: MCPX_VERSION.to_string(),
+    };
+
+    // Try to load existing baseline from store.
+    let existing = match store.get_baseline(&server_name) {
+        Ok(b) => b,
+        Err(e) => {
+            error!("Failed to load baseline: {}", e);
+            None
+        }
+    };
+
+    match existing {
+        None => {
+            // First time seeing this server — pin the baseline.
+            info!(
+                server = %server_name,
+                tools = current_baseline.tools.len(),
+                "No baseline found — auto-pinning"
+            );
+            if let Err(e) = store.pin_baseline(&current_baseline) {
+                error!("Failed to pin baseline: {}", e);
+            }
+            state.baseline = Some(current_baseline.tools);
+            state.baseline_pinned = true;
+        }
+        Some(baseline) => {
+            // Diff against the pinned baseline.
+            let report = diff::diff_tools(
+                &server_name,
+                &baseline.tools,
+                &tools_result.tools,
+            );
+
+            // Record the snapshot for history.
+            if let Err(e) = store.record_snapshot(&server_name, &current_baseline) {
+                error!("Failed to record snapshot: {}", e);
+            }
+
+            if report.diffs.is_empty() {
+                debug!(server = %server_name, "Schema unchanged from baseline");
+            } else {
+                let summary = classify::summarize(&report);
+                // Always log changes to stderr.
+                eprintln!("{}", summary);
+
+                // Record the event.
+                let detail = serde_json::to_value(&report).ok();
+                let _ = store.record_event(
+                    &server_name,
+                    if report.has_breaking() { "breaking_change" } else { "schema_change" },
+                    detail.as_ref(),
+                );
+
+                // Run poisoning detection on description changes.
+                for d in &report.diffs {
+                    if matches!(d.kind, diff::DiffKind::DescriptionChanged) {
+                        if let (Some(old), Some(new)) = (&d.old_value, &d.new_value) {
+                            let analysis = structural::analyze(&d.tool_name, old, new, 0.85);
+                            match analysis.verdict {
+                                structural::Verdict::Blocked => {
+                                    eprintln!(
+                                        "[mcpx] - [BLOCKED] poisoning detected in tool '{}' | patterns={:?}",
+                                        d.tool_name, analysis.injection_patterns
+                                    );
+                                    if !state.blocked_tools.contains(&d.tool_name) {
+                                        state.blocked_tools.push(d.tool_name.clone());
+                                    }
+                                }
+                                structural::Verdict::Suspicious => {
+                                    eprintln!(
+                                        "[mcpx] - [SUSPICIOUS] tool '{}' description drift | similarity={:.2}",
+                                        d.tool_name, analysis.structural_similarity
+                                    );
+                                }
+                                structural::Verdict::Clean => {}
+                            }
+                        }
+                    }
+                }
+
+                // Block tools with breaking changes.
+                if report.has_breaking() {
+                    for d in &report.diffs {
+                        if d.severity == diff::Severity::Breaking
+                            && !state.blocked_tools.contains(&d.tool_name)
+                        {
+                            state.blocked_tools.push(d.tool_name.clone());
+                        }
+                    }
+                }
+            }
+
+            state.baseline = Some(baseline.tools);
+            state.baseline_pinned = true;
+        }
+    }
+
+    // Always forward the tools/list response — we don't modify it,
+    // we just observe and potentially block individual tool calls later.
+    InterceptResult::Forward(raw.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use mcpx_transport::proxy::ProxyState;
+
+    #[test]
+    fn blocked_tool_call_is_injected_with_error() {
+        let mut state = ProxyState::new();
+        state.blocked_tools.push("search".into());
+
+        let raw = r#"{
+            "jsonrpc":"2.0",
+            "id":1,
+            "method":"tools/call",
+            "params":{"name":"search","arguments":{"q":"x"}}
+        }"#;
+
+        match handle_client_message(raw, &mut state) {
+            InterceptResult::Inject(json) => {
+                let response: Response = serde_json::from_str(&json).unwrap();
+                assert_eq!(response.error.unwrap().code, -32001);
+            }
+            _ => panic!("expected injected error response"),
+        }
+    }
+
+    #[test]
+    fn unblocked_tool_call_is_forwarded() {
+        let mut state = ProxyState::new();
+        let raw = r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"search"}}"#;
+
+        match handle_client_message(raw, &mut state) {
+            InterceptResult::Forward(msg) => assert_eq!(msg, raw),
+            _ => panic!("expected forwarded message"),
+        }
+    }
+
+    #[test]
+    fn invalid_json_is_forwarded() {
+        let mut state = ProxyState::new();
+        let raw = "not-json";
+
+        match handle_client_message(raw, &mut state) {
+            InterceptResult::Forward(msg) => assert_eq!(msg, raw),
+            _ => panic!("expected forwarded message"),
+        }
+    }
+}

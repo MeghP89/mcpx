@@ -1,0 +1,162 @@
+mod commands;
+mod interceptor;
+
+use clap::{Parser, Subcommand};
+
+const CLI_AFTER_HELP: &str = "\
+Examples:
+  mcpx run -- uv run main.py
+  mcpx run -- npx -y @modelcontextprotocol/server-github
+  mcpx baselines list
+  mcpx baselines show MyTestServer
+  mcpx diff MyTestServer
+  mcpx events MyTestServer --limit 50
+
+Workflow:
+  1) Run your MCP server through `mcpx run -- ...`
+  2) First `tools/list` auto-pins a baseline
+  3) Use `baselines` and `events` to inspect drift history
+";
+
+#[derive(Parser)]
+#[command(
+    name = "mcpx",
+    about = "MCP Schema Guardian Proxy for runtime schema drift and poisoning detection",
+    long_about = "mcpx is a transparent MCP proxy that monitors tool schema/description changes at runtime, records audit history, and blocks unsafe tool calls when breaking drift or poisoning is detected.",
+    after_help = CLI_AFTER_HELP,
+    version
+)]
+struct Cli {
+    #[command(subcommand)]
+    command: Commands,
+
+    /// Enable verbose logging (repeat for more: -v, -vv, -vvv)
+    #[arg(short, long, action = clap::ArgAction::Count, global = true)]
+    verbose: u8,
+}
+
+#[derive(Subcommand)]
+enum Commands {
+    /// Run as a transparent proxy wrapping an MCP server
+    Run {
+        /// The command and arguments to spawn the MCP server.
+        /// Separate from mcpx args with --.
+        /// Example: mcpx run -- npx -y @modelcontextprotocol/server-github
+        #[arg(trailing_var_arg = true, required = true)]
+        command: Vec<String>,
+    },
+
+    /// Manage pinned baselines (list/show/delete)
+    Baselines {
+        #[command(subcommand)]
+        action: BaselinesAction,
+    },
+
+    /// Show baseline summary for a server and how to perform live diffing
+    Diff {
+        /// Server name to diff
+        server_name: String,
+    },
+
+    /// Show recent audit events for a server
+    Events {
+        /// Server name
+        server_name: String,
+        /// Maximum number of events to show
+        #[arg(long, default_value_t = 20)]
+        limit: usize,
+    },
+}
+
+#[derive(Subcommand)]
+enum BaselinesAction {
+    /// List all pinned baselines
+    List,
+    /// Show details of a specific baseline
+    Show {
+        /// Server name
+        server_name: String,
+    },
+    /// Delete a pinned baseline
+    Delete {
+        /// Server name
+        server_name: String,
+    },
+}
+
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    let cli = Cli::parse();
+
+    // Set up tracing based on verbosity.
+    let filter = match cli.verbose {
+        0 => "mcpx=info",
+        1 => "mcpx=debug",
+        2 => "mcpx=trace",
+        _ => "trace",
+    };
+    tracing_subscriber::fmt()
+        .with_env_filter(filter)
+        .with_writer(std::io::stderr) // MCP stdio uses stdout, so logs go to stderr
+        .init();
+
+    match cli.command {
+        Commands::Run { command } => {
+            commands::run::execute(&command).await?;
+        }
+        Commands::Baselines { action } => match action {
+            BaselinesAction::List => commands::baselines::list()?,
+            BaselinesAction::Show { server_name } => commands::baselines::show(&server_name)?,
+            BaselinesAction::Delete { server_name } => commands::baselines::delete(&server_name)?,
+        },
+        Commands::Diff { server_name } => {
+            commands::diff::execute(&server_name)?;
+        }
+        Commands::Events { server_name, limit } => {
+            commands::events::list(&server_name, limit)?;
+        }
+    }
+
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::Parser;
+
+    #[test]
+    fn parses_events_with_default_limit() {
+        let cli = Cli::try_parse_from(["mcpx", "events", "demo-server"]).unwrap();
+        match cli.command {
+            Commands::Events { server_name, limit } => {
+                assert_eq!(server_name, "demo-server");
+                assert_eq!(limit, 20);
+            }
+            _ => panic!("expected events command"),
+        }
+    }
+
+    #[test]
+    fn parses_events_with_custom_limit() {
+        let cli = Cli::try_parse_from(["mcpx", "events", "demo-server", "--limit", "7"]).unwrap();
+        match cli.command {
+            Commands::Events { server_name, limit } => {
+                assert_eq!(server_name, "demo-server");
+                assert_eq!(limit, 7);
+            }
+            _ => panic!("expected events command"),
+        }
+    }
+
+    #[test]
+    fn parses_run_with_trailing_args() {
+        let cli = Cli::try_parse_from(["mcpx", "run", "--", "echo", "hello"]).unwrap();
+        match cli.command {
+            Commands::Run { command } => {
+                assert_eq!(command, vec!["echo".to_string(), "hello".to_string()]);
+            }
+            _ => panic!("expected run command"),
+        }
+    }
+}

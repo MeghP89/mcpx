@@ -1,0 +1,13 @@
+[package]
+name = "mcpx-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Core types for MCP JSON-RPC protocol messages"
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+chrono = { workspace = true }
+blake3 = { workspace = true }
+thiserror = { workspace = true }

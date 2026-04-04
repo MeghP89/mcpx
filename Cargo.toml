@@ -1,0 +1,45 @@
+[workspace]
+members = [
+    "crates/mcpx-core",
+    "crates/mcpx-transport",
+    "crates/mcpx-schema",
+    "crates/mcpx-poison",
+    "crates/mcpx-store",
+    "crates/mcpx-cli",
+]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+repository = "https://github.com/meghp89/mcpx"
+description = "MCP Schema Guardian Proxy — runtime detection of breaking changes, description poisoning, and backwards-compatible request translation for MCP servers"
+
+[workspace.dependencies]
+tokio = { version = "1", features = ["full"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+rusqlite = { version = "0.32", features = ["bundled"] }
+blake3 = "1"
+clap = { version = "4", features = ["derive"] }
+toml = "0.8"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+chrono = { version = "0.4", features = ["serde"] }
+strsim = "0.11"
+regex = "1"
+thiserror = "2"
+anyhow = "1"
+
+# Internal crates
+mcpx-core = { path = "crates/mcpx-core" }
+mcpx-transport = { path = "crates/mcpx-transport" }
+mcpx-schema = { path = "crates/mcpx-schema" }
+mcpx-poison = { path = "crates/mcpx-poison" }
+mcpx-store = { path = "crates/mcpx-store" }
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true
