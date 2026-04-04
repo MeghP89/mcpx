@@ -17,12 +17,12 @@ pub fn build_interceptor() -> Result<InterceptFn> {
     // Open the store once — the interceptor closure captures it.
     let store = Store::open_default()?;
 
-    Ok(Box::new(move |raw_msg: &str, direction: Direction, state: &mut ProxyState| {
-        match direction {
+    Ok(Box::new(
+        move |raw_msg: &str, direction: Direction, state: &mut ProxyState| match direction {
             Direction::ServerToClient => handle_server_message(raw_msg, state, &store),
             Direction::ClientToServer => handle_client_message(raw_msg, state),
-        }
-    }))
+        },
+    ))
 }
 
 fn handle_server_message(raw: &str, state: &mut ProxyState, store: &Store) -> InterceptResult {
@@ -40,7 +40,9 @@ fn handle_server_message(raw: &str, state: &mut ProxyState, store: &Store) -> In
                 match method.as_str() {
                     "initialize" => {
                         if let Some(result) = &resp.result {
-                            if let Ok(init) = serde_json::from_value::<InitializeResult>(result.clone()) {
+                            if let Ok(init) =
+                                serde_json::from_value::<InitializeResult>(result.clone())
+                            {
                                 info!(
                                     server = %init.server_info.name,
                                     version = ?init.server_info.version,
@@ -53,7 +55,9 @@ fn handle_server_message(raw: &str, state: &mut ProxyState, store: &Store) -> In
                     }
                     "tools/list" => {
                         if let Some(result) = &resp.result {
-                            if let Ok(tools_result) = serde_json::from_value::<ToolsListResult>(result.clone()) {
+                            if let Ok(tools_result) =
+                                serde_json::from_value::<ToolsListResult>(result.clone())
+                            {
                                 return handle_tools_list(raw, &tools_result, state, store);
                             }
                         }
@@ -168,11 +172,7 @@ fn handle_tools_list(
         }
         Some(baseline) => {
             // Diff against the pinned baseline.
-            let report = diff::diff_tools(
-                &server_name,
-                &baseline.tools,
-                &tools_result.tools,
-            );
+            let report = diff::diff_tools(&server_name, &baseline.tools, &tools_result.tools);
 
             // Record the snapshot for history.
             if let Err(e) = store.record_snapshot(&server_name, &current_baseline) {
@@ -190,7 +190,11 @@ fn handle_tools_list(
                 let detail = serde_json::to_value(&report).ok();
                 let _ = store.record_event(
                     &server_name,
-                    if report.has_breaking() { "breaking_change" } else { "schema_change" },
+                    if report.has_breaking() {
+                        "breaking_change"
+                    } else {
+                        "schema_change"
+                    },
                     detail.as_ref(),
                 );
 

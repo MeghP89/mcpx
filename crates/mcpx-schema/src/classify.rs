@@ -5,12 +5,27 @@ pub use crate::diff::{DiffReport, Severity};
 /// Summarize a diff report as a human-readable string.
 pub fn summarize(report: &DiffReport) -> String {
     if report.diffs.is_empty() {
-        return format!("[mcpx] [{}] no schema changes detected.", report.server_name);
+        return format!(
+            "[mcpx] [{}] no schema changes detected.",
+            report.server_name
+        );
     }
 
-    let breaking = report.diffs.iter().filter(|d| d.severity == Severity::Breaking).count();
-    let warnings = report.diffs.iter().filter(|d| d.severity == Severity::Warning).count();
-    let safe = report.diffs.iter().filter(|d| d.severity == Severity::Safe).count();
+    let breaking = report
+        .diffs
+        .iter()
+        .filter(|d| d.severity == Severity::Breaking)
+        .count();
+    let warnings = report
+        .diffs
+        .iter()
+        .filter(|d| d.severity == Severity::Warning)
+        .count();
+    let safe = report
+        .diffs
+        .iter()
+        .filter(|d| d.severity == Severity::Safe)
+        .count();
 
     let mut lines = vec![
         "[mcpx] --------------------------------------------------".to_string(),
@@ -31,11 +46,7 @@ pub fn summarize(report: &DiffReport) -> String {
             Severity::Warning => "WARNING",
             Severity::Safe => "SAFE",
         };
-        lines.push(format!(
-            "[mcpx] - [{}] {}",
-            sev,
-            diff.explanation
-        ));
+        lines.push(format!("[mcpx] - [{}] {}", sev, diff.explanation));
     }
     lines.push("[mcpx] --------------------------------------------------".to_string());
 

@@ -1,5 +1,5 @@
-pub mod structural;
 pub mod patterns;
+pub mod structural;
 
 #[cfg(test)]
 mod tests {

@@ -156,14 +156,22 @@ fn diff_input_schemas(
         .input_schema
         .get("required")
         .and_then(|v| v.as_array())
-        .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect()
+        })
         .unwrap_or_default();
 
     let new_required: HashSet<String> = live
         .input_schema
         .get("required")
         .and_then(|v| v.as_array())
-        .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect()
+        })
         .unwrap_or_default();
 
     let old_keys: HashSet<&String> = old_props.map(|p| p.keys().collect()).unwrap_or_default();
@@ -212,7 +220,11 @@ fn diff_input_schemas(
                 "Parameter '{}' was added to tool '{}'{}.",
                 key,
                 tool_name,
-                if is_required { " (required — breaks existing clients)" } else { " (optional)" }
+                if is_required {
+                    " (required — breaks existing clients)"
+                } else {
+                    " (optional)"
+                }
             ),
         });
     }
@@ -220,7 +232,9 @@ fn diff_input_schemas(
     // Changed parameters (exist in both).
     if let (Some(old_p), Some(new_p)) = (old_props, new_props) {
         for key in old_keys.intersection(&new_keys) {
-            if let (Some(old_schema), Some(new_schema)) = (old_p.get(key.as_str()), new_p.get(key.as_str())) {
+            if let (Some(old_schema), Some(new_schema)) =
+                (old_p.get(key.as_str()), new_p.get(key.as_str()))
+            {
                 // Type change check.
                 let old_type = extract_type(old_schema);
                 let new_type = extract_type(new_schema);
@@ -363,7 +377,11 @@ mod tests {
 
     #[test]
     fn detect_description_change() {
-        let old = make_tool("search", "Search for items", serde_json::json!({"type": "object"}));
+        let old = make_tool(
+            "search",
+            "Search for items",
+            serde_json::json!({"type": "object"}),
+        );
         let new = make_tool(
             "search",
             "Search for active items only",

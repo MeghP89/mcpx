@@ -4,10 +4,7 @@
 /// Rewrite `tools/call` arguments to preserve compatibility across schema changes.
 ///
 /// Current behavior: no-op passthrough until shim rules are implemented.
-pub fn rewrite_tool_call_args(
-    _tool_name: &str,
-    args: &serde_json::Value,
-) -> serde_json::Value {
+pub fn rewrite_tool_call_args(_tool_name: &str, args: &serde_json::Value) -> serde_json::Value {
     args.clone()
 }
 

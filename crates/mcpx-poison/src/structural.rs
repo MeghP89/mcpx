@@ -104,7 +104,7 @@ mod tests {
         let result = analyze(
             "search",
             "Search for items",
-            "Search for items\u{200B}\u{200B}",  // zero-width spaces
+            "Search for items\u{200B}\u{200B}", // zero-width spaces
             0.85,
         );
         assert_eq!(result.verdict, Verdict::Blocked);

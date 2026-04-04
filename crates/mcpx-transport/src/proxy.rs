@@ -64,9 +64,7 @@ pub enum Direction {
 }
 
 /// The interceptor function signature.
-pub type InterceptFn = Box<
-    dyn Fn(&str, Direction, &mut ProxyState) -> InterceptResult,
->;
+pub type InterceptFn = Box<dyn Fn(&str, Direction, &mut ProxyState) -> InterceptResult>;
 
 /// Run the stdio proxy loop.
 ///

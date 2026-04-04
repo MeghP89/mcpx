@@ -40,8 +40,9 @@ impl Store {
     }
 
     fn migrate(&self) -> Result<()> {
-        self.conn.execute_batch(
-            "
+        self.conn
+            .execute_batch(
+                "
             CREATE TABLE IF NOT EXISTS baselines (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 server_name TEXT NOT NULL,
@@ -72,8 +73,8 @@ impl Store {
             CREATE INDEX IF NOT EXISTS idx_snapshots_server ON snapshots(server_name);
             CREATE INDEX IF NOT EXISTS idx_events_server ON events(server_name);
             ",
-        )
-        .context("Failed to run database migrations")?;
+            )
+            .context("Failed to run database migrations")?;
         Ok(())
     }
 
