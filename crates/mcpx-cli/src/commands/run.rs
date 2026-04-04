@@ -21,7 +21,7 @@ pub async fn execute(command_args: &[String]) -> Result<()> {
 
     let interceptor = interceptor::build_interceptor()?;
 
-    proxy::run_stdio_proxy(command, &args.to_vec(), interceptor).await?;
+    proxy::run_stdio_proxy(command, args, interceptor).await?;
 
     Ok(())
 }

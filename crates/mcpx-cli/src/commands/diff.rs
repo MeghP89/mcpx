@@ -26,11 +26,17 @@ pub fn execute(server_name: &str) -> Result<()> {
             print_section("How To View Live Diff");
             eprintln!("1. Start proxy: mcpx run -- <command for {}>", server_name);
             eprintln!("2. Connect your MCP client through mcpx");
-            eprintln!("3. Observe schema changes in stderr and `mcpx events {}`", server_name);
+            eprintln!(
+                "3. Observe schema changes in stderr and `mcpx events {}`",
+                server_name
+            );
             // TODO: add one-shot mode that connects, captures tools/list, diffs, and exits
         }
         None => {
-            eprintln!("No baseline found for '{}'. Run the proxy first to auto-pin.", server_name);
+            eprintln!(
+                "No baseline found for '{}'. Run the proxy first to auto-pin.",
+                server_name
+            );
         }
     }
 

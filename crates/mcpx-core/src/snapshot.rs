@@ -41,7 +41,9 @@ impl ToolSnapshot {
         let description_hash = blake3::hash(desc.as_bytes()).to_hex().to_string();
 
         let canonical_schema = canonicalize_json(&def.input_schema);
-        let schema_hash = blake3::hash(canonical_schema.as_bytes()).to_hex().to_string();
+        let schema_hash = blake3::hash(canonical_schema.as_bytes())
+            .to_hex()
+            .to_string();
 
         Self {
             name: def.name.clone(),
@@ -79,7 +81,13 @@ fn canonicalize_json(value: &serde_json::Value) -> String {
             keys.sort();
             let entries: Vec<String> = keys
                 .iter()
-                .map(|k| format!("{}:{}", serde_json::to_string(k).unwrap(), canonicalize_json(&map[*k])))
+                .map(|k| {
+                    format!(
+                        "{}:{}",
+                        serde_json::to_string(k).unwrap(),
+                        canonicalize_json(&map[*k])
+                    )
+                })
                 .collect();
             format!("{{{}}}", entries.join(","))
         }

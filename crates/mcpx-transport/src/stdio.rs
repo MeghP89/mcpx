@@ -41,7 +41,11 @@ impl StdioTransport {
         tokio::spawn(async move {
             let mut stdin = child_stdin;
             while let Some(msg) = rx_to_server.recv().await {
-                trace!(direction = "→server", bytes = msg.len(), "writing to server stdin");
+                trace!(
+                    direction = "→server",
+                    bytes = msg.len(),
+                    "writing to server stdin"
+                );
                 if let Err(e) = stdin.write_all(msg.as_bytes()).await {
                     error!("Failed to write to server stdin: {}", e);
                     break;
@@ -68,7 +72,11 @@ impl StdioTransport {
                         if line.trim().is_empty() {
                             continue;
                         }
-                        trace!(direction = "←server", bytes = line.len(), "read from server stdout");
+                        trace!(
+                            direction = "←server",
+                            bytes = line.len(),
+                            "read from server stdout"
+                        );
                         if tx_from_server.send(line).await.is_err() {
                             debug!("Server stdout reader: receiver dropped");
                             break;
@@ -103,7 +111,10 @@ impl StdioTransport {
 
     /// Kill the child process.
     pub async fn kill(&mut self) -> Result<()> {
-        self.child.kill().await.context("Failed to kill child process")
+        self.child
+            .kill()
+            .await
+            .context("Failed to kill child process")
     }
 }
 
@@ -122,7 +133,11 @@ pub fn read_client_stdin() -> mpsc::Receiver<String> {
                     if line.trim().is_empty() {
                         continue;
                     }
-                    trace!(direction = "←client", bytes = line.len(), "read from client stdin");
+                    trace!(
+                        direction = "←client",
+                        bytes = line.len(),
+                        "read from client stdin"
+                    );
                     if tx.send(line).await.is_err() {
                         debug!("Client stdin reader: receiver dropped");
                         break;

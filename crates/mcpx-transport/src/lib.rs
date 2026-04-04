@@ -1,5 +1,5 @@
-pub mod stdio;
 pub mod proxy;
+pub mod stdio;
 
 #[cfg(test)]
 mod tests {

@@ -1,5 +1,5 @@
-pub mod diff;
 pub mod classify;
+pub mod diff;
 pub mod shim;
 
 #[cfg(test)]

@@ -11,7 +11,9 @@ pub fn list() -> Result<()> {
     let names = store.list_baselines()?;
 
     if names.is_empty() {
-        eprintln!("No baselines pinned yet. Run `mcpx run -- <command>` to auto-pin on first connection.");
+        eprintln!(
+            "No baselines pinned yet. Run `mcpx run -- <command>` to auto-pin on first connection."
+        );
         return Ok(());
     }
 
@@ -35,13 +37,15 @@ pub fn list() -> Result<()> {
         .unwrap_or(6)
         .max("Server".len());
     eprintln!(
-        "{:<server_w$}  {:>5}  {}",
+        "{:<server_w$}  {:>5}  Pinned At (UTC)",
         "Server",
         "Tools",
-        "Pinned At (UTC)",
         server_w = server_w
     );
-    eprintln!("{}", "-".repeat(server_w + 2 + 5 + 2 + "Pinned At (UTC)".len()));
+    eprintln!(
+        "{}",
+        "-".repeat(server_w + 2 + 5 + 2 + "Pinned At (UTC)".len())
+    );
     for (server, tools, pinned) in rows {
         eprintln!(
             "{:<server_w$}  {:>5}  {}",
@@ -74,10 +78,7 @@ pub fn show(server_name: &str) -> Result<()> {
 
             print_section("Tools");
             for tool in &baseline.tools {
-                eprintln!(
-                    "- {}",
-                    tool.name,
-                );
+                eprintln!("- {}", tool.name,);
                 eprintln!(
                     "  Description: {}",
                     tool.description.as_deref().unwrap_or("(no description)")
@@ -89,10 +90,7 @@ pub fn show(server_name: &str) -> Result<()> {
                 if let Some(p) = props {
                     eprintln!("  Parameters:");
                     for (key, schema) in p {
-                        let typ = schema
-                            .get("type")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("any");
+                        let typ = schema.get("type").and_then(|v| v.as_str()).unwrap_or("any");
                         eprintln!("    - {}: {}", key, typ);
                     }
                 } else {
