@@ -41,9 +41,7 @@ pub fn analyze(
     let injection_patterns = patterns::scan_injections(new_description);
     let hidden_chars = patterns::scan_hidden_chars(new_description);
 
-    let verdict = if !injection_patterns.is_empty() {
-        Verdict::Blocked
-    } else if !hidden_chars.is_empty() {
+    let verdict = if !injection_patterns.is_empty() || !hidden_chars.is_empty() {
         Verdict::Blocked
     } else if structural_similarity < similarity_threshold {
         Verdict::Suspicious

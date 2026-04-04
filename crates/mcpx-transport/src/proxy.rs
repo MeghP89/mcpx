@@ -89,11 +89,9 @@ pub async fn run_stdio_proxy(
                 let mut st = state.lock().await;
 
                 // Track request IDs so we can identify responses.
-                if let Ok(parsed) = serde_json::from_str::<Message>(&msg) {
-                    if let Message::Request(ref req) = parsed {
-                        let id_key = format!("{:?}", req.id);
-                        st.pending_requests.insert(id_key, req.method.clone());
-                    }
+                if let Ok(Message::Request(req)) = serde_json::from_str::<Message>(&msg) {
+                    let id_key = format!("{:?}", req.id);
+                    st.pending_requests.insert(id_key, req.method);
                 }
 
                 match (interceptor)(&msg, Direction::ClientToServer, &mut st) {

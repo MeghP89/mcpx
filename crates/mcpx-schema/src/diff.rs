@@ -69,7 +69,7 @@ pub fn diff_tools(
         live.iter().map(|t| (t.name.as_str(), t)).collect();
 
     // Detect removed tools.
-    for (name, _snap) in &baseline_map {
+    for name in baseline_map.keys() {
         if !live_map.contains_key(name) {
             diffs.push(SchemaDiff {
                 tool_name: name.to_string(),
@@ -84,7 +84,7 @@ pub fn diff_tools(
     }
 
     // Detect added tools.
-    for (name, _def) in &live_map {
+    for name in live_map.keys() {
         if !baseline_map.contains_key(name) {
             diffs.push(SchemaDiff {
                 tool_name: name.to_string(),

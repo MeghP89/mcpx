@@ -37,10 +37,9 @@ pub fn list() -> Result<()> {
         .unwrap_or(6)
         .max("Server".len());
     eprintln!(
-        "{:<server_w$}  {:>5}  {}",
+        "{:<server_w$}  {:>5}  Pinned At (UTC)",
         "Server",
         "Tools",
-        "Pinned At (UTC)",
         server_w = server_w
     );
     eprintln!(

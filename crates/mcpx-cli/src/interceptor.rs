@@ -31,42 +31,38 @@ fn handle_server_message(raw: &str, state: &mut ProxyState, store: &Store) -> In
         Err(_) => return InterceptResult::Forward(raw.to_string()),
     };
 
-    match &parsed {
-        Message::Response(resp) => {
-            let id_key = format!("{:?}", resp.id);
+    if let Message::Response(resp) = &parsed {
+        let id_key = format!("{:?}", resp.id);
 
-            // Check what method this response is for.
-            if let Some(method) = state.pending_requests.remove(&id_key) {
-                match method.as_str() {
-                    "initialize" => {
-                        if let Some(result) = &resp.result {
-                            if let Ok(init) =
-                                serde_json::from_value::<InitializeResult>(result.clone())
-                            {
-                                info!(
-                                    server = %init.server_info.name,
-                                    version = ?init.server_info.version,
-                                    protocol = %init.protocol_version,
-                                    "Connected to MCP server"
-                                );
-                                state.server_info = Some(init);
-                            }
+        // Check what method this response is for.
+        if let Some(method) = state.pending_requests.remove(&id_key) {
+            match method.as_str() {
+                "initialize" => {
+                    if let Some(result) = &resp.result {
+                        if let Ok(init) = serde_json::from_value::<InitializeResult>(result.clone())
+                        {
+                            info!(
+                                server = %init.server_info.name,
+                                version = ?init.server_info.version,
+                                protocol = %init.protocol_version,
+                                "Connected to MCP server"
+                            );
+                            state.server_info = Some(init);
                         }
                     }
-                    "tools/list" => {
-                        if let Some(result) = &resp.result {
-                            if let Ok(tools_result) =
-                                serde_json::from_value::<ToolsListResult>(result.clone())
-                            {
-                                return handle_tools_list(raw, &tools_result, state, store);
-                            }
-                        }
-                    }
-                    _ => {}
                 }
+                "tools/list" => {
+                    if let Some(result) = &resp.result {
+                        if let Ok(tools_result) =
+                            serde_json::from_value::<ToolsListResult>(result.clone())
+                        {
+                            return handle_tools_list(raw, &tools_result, state, store);
+                        }
+                    }
+                }
+                _ => {}
             }
         }
-        _ => {}
     }
 
     InterceptResult::Forward(raw.to_string())
