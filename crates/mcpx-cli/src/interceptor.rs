@@ -1,13 +1,15 @@
 use anyhow::Result;
 use chrono::Utc;
-use mcpx_core::jsonrpc::{Message, Response};
+use mcpx_core::jsonrpc::{Message, Request, Response};
 use mcpx_core::mcp::{InitializeResult, ToolCallParams, ToolDefinition, ToolsListResult};
 use mcpx_core::snapshot::{ServerBaseline, ToolSnapshot};
 use mcpx_poison::structural;
 use mcpx_schema::classify;
 use mcpx_schema::diff;
+use mcpx_schema::shim;
 use mcpx_store::Store;
 use mcpx_transport::proxy::{BlockReason, Direction, InterceptFn, InterceptResult, ProxyState};
+use std::collections::HashMap;
 use tracing::{debug, error, info, warn};
 
 const MCPX_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -21,20 +23,30 @@ struct ParameterPoisonFinding {
     detail: serde_json::Value,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct InterceptorConfig {
+    pub auto_approve_shims: bool,
+}
+
 /// Build the interceptor function that the proxy loop calls on every message.
-pub fn build_interceptor() -> Result<InterceptFn> {
+pub fn build_interceptor(config: InterceptorConfig) -> Result<InterceptFn> {
     // Open the store once — the interceptor closure captures it.
     let store = Store::open_default()?;
 
     Ok(Box::new(
         move |raw_msg: &str, direction: Direction, state: &mut ProxyState| match direction {
-            Direction::ServerToClient => handle_server_message(raw_msg, state, &store),
+            Direction::ServerToClient => handle_server_message(raw_msg, state, &store, config),
             Direction::ClientToServer => handle_client_message(raw_msg, state),
         },
     ))
 }
 
-fn handle_server_message(raw: &str, state: &mut ProxyState, store: &Store) -> InterceptResult {
+fn handle_server_message(
+    raw: &str,
+    state: &mut ProxyState,
+    store: &Store,
+    config: InterceptorConfig,
+) -> InterceptResult {
     let parsed: Message = match serde_json::from_str(raw) {
         Ok(m) => m,
         Err(_) => return InterceptResult::Forward(raw.to_string()),
@@ -65,7 +77,7 @@ fn handle_server_message(raw: &str, state: &mut ProxyState, store: &Store) -> In
                         if let Ok(tools_result) =
                             serde_json::from_value::<ToolsListResult>(result.clone())
                         {
-                            return handle_tools_list(raw, &tools_result, state, store);
+                            return handle_tools_list(raw, &tools_result, state, store, config);
                         }
                     }
                 }
@@ -78,13 +90,13 @@ fn handle_server_message(raw: &str, state: &mut ProxyState, store: &Store) -> In
 }
 
 fn handle_client_message(raw: &str, state: &mut ProxyState) -> InterceptResult {
-    let parsed: Message = match serde_json::from_str(raw) {
+    let mut parsed: Message = match serde_json::from_str(raw) {
         Ok(m) => m,
         Err(_) => return InterceptResult::Forward(raw.to_string()),
     };
 
     // Check if client is calling a tool that's been blocked.
-    if let Message::Request(ref req) = parsed {
+    if let Message::Request(ref mut req) = parsed {
         if req.method == "tools/call" {
             if let Some(params) = &req.params {
                 if let Ok(call) = serde_json::from_value::<ToolCallParams>(params.clone()) {
@@ -103,15 +115,39 @@ fn handle_client_message(raw: &str, state: &mut ProxyState) -> InterceptResult {
                                 "reason_code": reason.code,
                                 "event_id": reason.event_id,
                                 "tool_name": call.name,
-                                "remediation_steps": [
-                                    "Run `mcpx diff` to review detected drift details",
-                                    "Run `mcpx events list <server>` to inspect the recorded event",
-                                    "If expected, run `mcpx baselines delete <server>` and reconnect to re-pin"
-                                ]
+                                "remediation_steps": remediation_steps_for_reason(reason.code)
                             })),
                         );
                         let json = serde_json::to_string(&err_response).unwrap();
                         return InterceptResult::Inject(json);
+                    }
+
+                    if let Some(mappings) = state.approved_shims.get(&call.name).cloned() {
+                        match apply_approved_shim_to_request(req, &mappings) {
+                            Ok(true) => {
+                                let json = serde_json::to_string(&parsed).unwrap();
+                                return InterceptResult::Forward(json);
+                            }
+                            Ok(false) => {}
+                            Err(reason) => {
+                                let err_response = Response::error_with_data(
+                                    req.id.clone(),
+                                    -32001,
+                                    format!("[mcpx] Tool '{}' shim failed: {}", call.name, reason),
+                                    Some(serde_json::json!({
+                                        "reason_code": "shim_rewrite_failed",
+                                        "event_id": serde_json::Value::Null,
+                                        "tool_name": call.name,
+                                        "remediation_steps": [
+                                            "Run `mcpx shims list <server>` to inspect approved mappings",
+                                            "Approve a new proposal with `mcpx shims approve <server> <tool>` or disable auto-shimming"
+                                        ]
+                                    })),
+                                );
+                                let json = serde_json::to_string(&err_response).unwrap();
+                                return InterceptResult::Inject(json);
+                            }
+                        }
                     }
                 }
             }
@@ -126,6 +162,7 @@ fn handle_tools_list(
     tools_result: &ToolsListResult,
     state: &mut ProxyState,
     store: &Store,
+    config: InterceptorConfig,
 ) -> InterceptResult {
     let server_name = state
         .server_info
@@ -169,6 +206,7 @@ fn handle_tools_list(
         }
     };
 
+    state.approved_shims.clear();
     apply_parameter_poison_blocks(&server_name, &tools_result.tools, state, store);
 
     match existing {
@@ -186,6 +224,15 @@ fn handle_tools_list(
             state.baseline_pinned = true;
         }
         Some(baseline) => {
+            evaluate_shim_proposals(
+                &server_name,
+                &baseline.tools,
+                &tools_result.tools,
+                state,
+                store,
+                config.auto_approve_shims,
+            );
+
             // Diff against the pinned baseline.
             let report = diff::diff_tools(&server_name, &baseline.tools, &tools_result.tools);
 
@@ -399,10 +446,195 @@ fn apply_parameter_poison_blocks(
     }
 }
 
+fn evaluate_shim_proposals(
+    server_name: &str,
+    baseline_tools: &[ToolSnapshot],
+    live_tools: &[ToolDefinition],
+    state: &mut ProxyState,
+    store: &Store,
+    auto_approve_shims: bool,
+) {
+    let live_by_name: HashMap<&str, &ToolDefinition> =
+        live_tools.iter().map(|t| (t.name.as_str(), t)).collect();
+    for snap in baseline_tools {
+        if state.blocked_tools.contains_key(&snap.name) {
+            continue;
+        }
+        let Some(live) = live_by_name.get(snap.name.as_str()) else {
+            continue;
+        };
+
+        let proposal =
+            shim::propose_shim_mappings(&snap.name, &snap.input_schema, &live.input_schema);
+        match proposal.action {
+            shim::ShimProposalAction::None => {}
+            shim::ShimProposalAction::Blocked => {
+                let detail = serde_json::json!({
+                    "tool_name": snap.name,
+                    "reason": proposal.reason,
+                });
+                let event_id = store
+                    .record_event(server_name, "shim_not_trivial", Some(&detail))
+                    .ok();
+                state.blocked_tools.insert(
+                    snap.name.clone(),
+                    BlockReason {
+                        code: "shim_not_trivial",
+                        message:
+                            "schema drift requires manual baseline update (not safe to auto-shim)"
+                                .to_string(),
+                        event_id,
+                    },
+                );
+            }
+            shim::ShimProposalAction::Proposed => {
+                let mappings_value = match serde_json::to_value(&proposal.mappings) {
+                    Ok(v) => v,
+                    Err(_) => continue,
+                };
+                let current_status = store
+                    .get_shim_status(server_name, &snap.name, &mappings_value)
+                    .ok()
+                    .flatten();
+
+                let is_approved = matches!(
+                    current_status.as_deref(),
+                    Some("approved" | "auto_approved")
+                );
+                let should_apply = auto_approve_shims || is_approved;
+
+                if should_apply {
+                    if auto_approve_shims && !is_approved {
+                        let _ = store.record_shim_decision(
+                            server_name,
+                            &snap.name,
+                            &mappings_value,
+                            "auto_approved",
+                        );
+                    }
+                    let mut map = HashMap::new();
+                    for m in &proposal.mappings {
+                        map.insert(m.from.clone(), m.to.clone());
+                    }
+                    state.approved_shims.insert(snap.name.clone(), map);
+                    if matches!(
+                        state.blocked_tools.get(&snap.name).map(|r| r.code),
+                        Some("shim_requires_approval")
+                    ) {
+                        state.blocked_tools.remove(&snap.name);
+                    }
+                } else {
+                    if !matches!(current_status.as_deref(), Some("proposed")) {
+                        let _ = store.record_shim_decision(
+                            server_name,
+                            &snap.name,
+                            &mappings_value,
+                            "proposed",
+                        );
+                    }
+                    let detail = serde_json::json!({
+                        "tool_name": snap.name,
+                        "mappings": proposal.mappings,
+                        "status": "proposed"
+                    });
+                    let event_id = store
+                        .record_event(server_name, "shim_approval_required", Some(&detail))
+                        .ok();
+                    state.blocked_tools.insert(
+                        snap.name.clone(),
+                        BlockReason {
+                            code: "shim_requires_approval",
+                            message: format!(
+                                "shim proposal pending approval. Run `mcpx shims approve {} {}`",
+                                server_name, snap.name
+                            ),
+                            event_id,
+                        },
+                    );
+                }
+            }
+        }
+    }
+}
+
+fn apply_approved_shim_to_request(
+    req: &mut Request,
+    mappings: &HashMap<String, String>,
+) -> std::result::Result<bool, String> {
+    let Some(params_val) = req.params.as_mut() else {
+        return Ok(false);
+    };
+    let Some(params_obj) = params_val.as_object_mut() else {
+        return Ok(false);
+    };
+    let Some(args_val) = params_obj.get_mut("arguments") else {
+        return Ok(false);
+    };
+    let Some(args_obj) = args_val.as_object() else {
+        return Ok(false);
+    };
+
+    let mut out = args_obj.clone();
+    let mut rewritten = false;
+    for (from, to) in mappings {
+        if out.contains_key(to) && out.contains_key(from) {
+            return Err(format!("both '{}' and '{}' present in arguments", from, to));
+        }
+        if let Some(v) = out.remove(from) {
+            validate_mapped_value(to, &v)?;
+            out.insert(to.clone(), v);
+            rewritten = true;
+        }
+    }
+    if rewritten {
+        *args_val = serde_json::Value::Object(out);
+    }
+    Ok(rewritten)
+}
+
+fn remediation_steps_for_reason(reason_code: &str) -> Vec<&'static str> {
+    match reason_code {
+        "shim_requires_approval" => vec![
+            "Run `mcpx shims list <server>` to inspect proposed mappings",
+            "Run `mcpx shims approve <server> <tool>` to approve",
+            "Or run with `--auto-approve-shims` for trusted environments",
+        ],
+        _ => vec![
+            "Run `mcpx diff` to review detected drift details",
+            "Run `mcpx events list <server>` to inspect the recorded event",
+            "If expected, run `mcpx baselines delete <server>` and reconnect to re-pin",
+        ],
+    }
+}
+
+fn validate_mapped_value(
+    target_key: &str,
+    value: &serde_json::Value,
+) -> std::result::Result<(), String> {
+    let is_sensitive_target = ["cmd", "command", "script", "exec", "uri", "path"]
+        .iter()
+        .any(|t| target_key.to_ascii_lowercase().contains(t));
+    if !is_sensitive_target {
+        return Ok(());
+    }
+    let Some(s) = value.as_str() else {
+        return Ok(());
+    };
+    let suspicious = [";", "&&", "||", "`", "$(", "\n"];
+    if suspicious.iter().any(|p| s.contains(p)) {
+        return Err(format!(
+            "mapped value for '{}' failed safety validation",
+            target_key
+        ));
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use mcpx_transport::proxy::ProxyState;
+    use std::collections::HashMap;
 
     #[test]
     fn blocked_tool_call_is_injected_with_error() {
@@ -497,5 +729,25 @@ mod tests {
         let findings = collect_parameter_poison_findings(&tools);
         assert_eq!(findings.len(), 1);
         assert_eq!(findings[0].reason_code, "poison_parameter_description");
+    }
+
+    #[test]
+    fn approved_shim_rewrites_arguments() {
+        let mut state = ProxyState::new();
+        state.approved_shims.insert(
+            "search".into(),
+            HashMap::from([(String::from("q"), String::from("query"))]),
+        );
+        let raw = r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"search","arguments":{"q":"x"}}}"#;
+
+        match handle_client_message(raw, &mut state) {
+            InterceptResult::Forward(msg) => {
+                let parsed: serde_json::Value = serde_json::from_str(&msg).unwrap();
+                let args = &parsed["params"]["arguments"];
+                assert_eq!(args["query"], "x");
+                assert!(args.get("q").is_none());
+            }
+            _ => panic!("expected forwarded rewritten message"),
+        }
     }
 }

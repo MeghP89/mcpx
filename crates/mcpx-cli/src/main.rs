@@ -6,12 +6,15 @@ use clap::{Parser, Subcommand};
 const CLI_AFTER_HELP: &str = "\
 Examples:
   mcpx run -- uv run main.py
+  mcpx run --auto-approve-shims -- uv run main.py
   mcpx run -- npx -y @modelcontextprotocol/server-github
   mcpx run --upstream https://example.com/mcp -H \"Authorization: Bearer abc123\"
   mcpx baselines list
   mcpx baselines show MyTestServer
   mcpx diff MyTestServer
   mcpx events MyTestServer --limit 50
+  mcpx shims list MyTestServer
+  mcpx shims approve MyTestServer search
 
 Workflow:
   1) Run your MCP server through `mcpx run -- ...`
@@ -51,6 +54,9 @@ enum Commands {
         /// Example: mcpx run -- npx -y @modelcontextprotocol/server-github
         #[arg(trailing_var_arg = true)]
         command: Vec<String>,
+        /// Auto-approve and apply eligible trivial shims instead of requiring manual approval.
+        #[arg(long, default_value_t = false)]
+        auto_approve_shims: bool,
     },
 
     /// Manage pinned baselines (list/show/delete)
@@ -73,6 +79,12 @@ enum Commands {
         #[arg(long, default_value_t = 20)]
         limit: usize,
     },
+
+    /// List and approve shim proposals
+    Shims {
+        #[command(subcommand)]
+        action: ShimsAction,
+    },
 }
 
 #[derive(Subcommand)]
@@ -88,6 +100,22 @@ enum BaselinesAction {
     Delete {
         /// Server name
         server_name: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum ShimsAction {
+    /// List shim proposals/decisions for a server
+    List {
+        /// Server name
+        server_name: String,
+    },
+    /// Approve latest shim proposal for a specific tool
+    Approve {
+        /// Server name
+        server_name: String,
+        /// Tool name
+        tool_name: String,
     },
 }
 
@@ -112,8 +140,9 @@ async fn main() -> anyhow::Result<()> {
             upstream,
             header,
             command,
+            auto_approve_shims,
         } => {
-            commands::run::execute(&upstream, &header, &command).await?;
+            commands::run::execute(&upstream, &header, &command, auto_approve_shims).await?;
         }
         Commands::Baselines { action } => match action {
             BaselinesAction::List => commands::baselines::list()?,
@@ -126,6 +155,13 @@ async fn main() -> anyhow::Result<()> {
         Commands::Events { server_name, limit } => {
             commands::events::list(&server_name, limit)?;
         }
+        Commands::Shims { action } => match action {
+            ShimsAction::List { server_name } => commands::shims::list(&server_name)?,
+            ShimsAction::Approve {
+                server_name,
+                tool_name,
+            } => commands::shims::approve(&server_name, &tool_name)?,
+        },
     }
 
     Ok(())
@@ -168,12 +204,26 @@ mod tests {
                 command,
                 header,
                 upstream,
+                auto_approve_shims,
             } => {
                 assert_eq!(command, vec!["echo".to_string(), "hello".to_string()]);
                 assert_eq!(header, Vec::<String>::new());
                 assert_eq!(upstream, None);
+                assert!(!auto_approve_shims);
             }
             _ => panic!("expected run command"),
+        }
+    }
+
+    #[test]
+    fn parses_shims_list() {
+        let cli = Cli::try_parse_from(["mcpx", "shims", "list", "demo-server"]).unwrap();
+        match cli.command {
+            Commands::Shims { action } => match action {
+                ShimsAction::List { server_name } => assert_eq!(server_name, "demo-server"),
+                _ => panic!("expected shims list command"),
+            },
+            _ => panic!("expected shims command"),
         }
     }
 }

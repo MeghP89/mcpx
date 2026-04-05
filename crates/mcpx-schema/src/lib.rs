@@ -15,5 +15,14 @@ mod tests {
         let _ = super::classify::summarize as fn(&super::diff::DiffReport) -> String;
         let _ = super::shim::rewrite_tool_call_args
             as fn(&str, &serde_json::Value) -> serde_json::Value;
+        let _ = super::shim::rewrite_tool_call_args_safe
+            as fn(
+                &str,
+                &serde_json::Value,
+                &serde_json::Value,
+                &serde_json::Value,
+            ) -> super::shim::ShimResult;
+        let _ = super::shim::propose_shim_mappings
+            as fn(&str, &serde_json::Value, &serde_json::Value) -> super::shim::ShimProposalResult;
     }
 }
