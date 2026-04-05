@@ -1,0 +1,13 @@
+[package]
+name = "mcpx-poison-ml"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Level 3 semantic similarity poisoning detection for mcpx"
+
+[dependencies]
+ort = { version = "2.0.0-rc.12", default-features = false, features = ["download-binaries", "ndarray", "tls-rustls", "std"] }
+tokenizers = { version = "0.21", default-features = false, features = ["fancy-regex"] }
+hf-hub = { version = "0.4", default-features = false, features = ["rustls-tls", "ureq"] }
+anyhow = { workspace = true }
+tracing = { workspace = true }

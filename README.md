@@ -43,6 +43,7 @@ On **first connection**, it snapshots every tool's schema and description as a p
 # Optional:
 # ./install.sh --prefix /usr/local
 # ./install.sh --debug
+# ./install.sh --ml              # Enable Level 3 semantic similarity detection
 
 # Use as a drop-in proxy wrapper
 # Before:  "command": "npx", "args": ["-y", "@modelcontextprotocol/server-github"]
@@ -118,6 +119,16 @@ mcpx scans tool descriptions for:
 - Hidden Unicode characters (zero-width spaces, RTL overrides)
 - BCC exfiltration (the Postmark MCP attack pattern)
 
+**Level 3** (opt-in, `--ml` flag): Semantic similarity — uses a local [all-MiniLM-L6-v2](https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2) embedding model (~80MB, downloaded once) to detect meaning-preserving rewording that evades structural checks. Descriptions with semantic similarity below 0.80 are flagged as suspicious.
+
+```bash
+# Install with Level 3 enabled
+./install.sh --ml
+
+# Or with cargo
+cargo install --path crates/mcpx-cli --features ml
+```
+
 ## Architecture
 
 mcpx is built as a Rust workspace with focused crates:
@@ -126,6 +137,7 @@ mcpx is built as a Rust workspace with focused crates:
 - **mcpx-transport** — stdio and HTTP/SSE bidirectional proxy, message pump
 - **mcpx-schema** — recursive JSON Schema diffing, severity classification
 - **mcpx-poison** — structural similarity analysis, injection pattern detection
+- **mcpx-poison-ml** — (optional) semantic similarity via ONNX embedding model
 - **mcpx-store** — SQLite storage for baselines, snapshots, audit logs
 - **mcpx-cli** — CLI binary with clap
 
@@ -159,7 +171,7 @@ Starter feature ideas:
 
 - [x] v0.1 — stdio proxy, auto-baseline, schema diffing, poisoning detection (levels 1+2), blocking
 - [ ] v0.2 — ~~HTTP/SSE transport~~, auto-shimming (backwards-compatible request rewriting), CI export (JSON/SARIF)
-- [ ] v0.3 — semantic similarity (local embeddings), TUI dashboard, `mcpdiff` baseline format interop
+- [ ] v0.3 — ~~semantic similarity (local embeddings)~~, TUI dashboard, `mcpdiff` baseline format interop
 - [ ] v0.4 — multi-server composition, policy-as-code (TOML config), Homebrew tap
 
 ## Building from Source
@@ -169,6 +181,9 @@ git clone https://github.com/meghsatpat/mcpx.git
 cd mcpx
 cargo build --release
 # Binary at target/release/mcpx
+
+# With semantic similarity (Level 3):
+cargo build --release --features ml
 ```
 
 ## CI and Release Workflows

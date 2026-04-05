@@ -9,6 +9,9 @@ description = "MCP Schema Guardian Proxy — runtime breaking change detection, 
 name = "mcpx"
 path = "src/main.rs"
 
+[features]
+ml = ["mcpx-poison/ml"]
+
 [dependencies]
 mcpx-core = { workspace = true }
 mcpx-transport = { workspace = true }

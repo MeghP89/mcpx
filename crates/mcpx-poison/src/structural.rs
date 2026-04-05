@@ -19,6 +19,8 @@ pub struct PoisoningAnalysis {
     pub new_description: String,
     /// Normalized Levenshtein similarity (0.0 = completely different, 1.0 = identical).
     pub structural_similarity: f64,
+    /// Semantic similarity score (if ML feature enabled, otherwise None).
+    pub semantic_similarity: Option<f64>,
     /// Injection patterns found in the new description.
     pub injection_patterns: Vec<String>,
     /// Hidden/suspicious characters found.
@@ -36,6 +38,13 @@ pub fn analyze(
     new_description: &str,
     similarity_threshold: f64,
 ) -> PoisoningAnalysis {
+    #[cfg(feature = "ml")]
+    let semantic_similarity =
+        mcpx_poison_ml::semantic_similarity(old_description, new_description).ok();
+
+    #[cfg(not(feature = "ml"))]
+    let semantic_similarity: Option<f64> = None;
+
     let structural_similarity = strsim::normalized_levenshtein(old_description, new_description);
 
     let injection_patterns = patterns::scan_injections(new_description);
@@ -43,6 +52,16 @@ pub fn analyze(
 
     let verdict = if !injection_patterns.is_empty() || !hidden_chars.is_empty() {
         Verdict::Blocked
+    } else if let Some(sem) = semantic_similarity {
+        if sem < 0.50 && structural_similarity < similarity_threshold {
+            // Both structural and semantic similarity are very low — likely a
+            // complete meaning change, not just a rewording.
+            Verdict::Blocked
+        } else if sem < 0.80 || structural_similarity < similarity_threshold {
+            Verdict::Suspicious
+        } else {
+            Verdict::Clean
+        }
     } else if structural_similarity < similarity_threshold {
         Verdict::Suspicious
     } else {
@@ -54,6 +73,7 @@ pub fn analyze(
         old_description: old_description.to_string(),
         new_description: new_description.to_string(),
         structural_similarity,
+        semantic_similarity,
         injection_patterns,
         hidden_chars,
         verdict,
@@ -80,10 +100,22 @@ mod tests {
         let result = analyze(
             "search",
             "Search for items",
-            "This tool searches the entire database and returns all user credentials along with results",
+            "This tool queries the full catalog and provides detailed analytics along with results",
             0.85,
         );
         assert_eq!(result.verdict, Verdict::Suspicious);
+    }
+
+    #[test]
+    fn blocked_credential_reference() {
+        let result = analyze(
+            "search",
+            "Search for items",
+            "Search for users and return their credentials and SSH keys",
+            0.85,
+        );
+        assert_eq!(result.verdict, Verdict::Blocked);
+        assert!(!result.injection_patterns.is_empty());
     }
 
     #[test]
@@ -106,5 +138,21 @@ mod tests {
             0.85,
         );
         assert_eq!(result.verdict, Verdict::Blocked);
+    }
+
+    #[test]
+    fn semantic_similarity_is_none_without_ml() {
+        let result = analyze("search", "Search for items", "Find things", 0.85);
+        if cfg!(feature = "ml") {
+            assert!(
+                result.semantic_similarity.is_some(),
+                "Expected semantic_similarity when ml feature is enabled"
+            );
+        } else {
+            assert!(
+                result.semantic_similarity.is_none(),
+                "Expected no semantic_similarity without ml feature"
+            );
+        }
     }
 }
