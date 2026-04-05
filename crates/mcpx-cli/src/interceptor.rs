@@ -7,7 +7,7 @@ use mcpx_poison::structural;
 use mcpx_schema::classify;
 use mcpx_schema::diff;
 use mcpx_store::Store;
-use mcpx_transport::proxy::{Direction, InterceptFn, InterceptResult, ProxyState};
+use mcpx_transport::proxy::{BlockReason, Direction, InterceptFn, InterceptResult, ProxyState};
 use tracing::{debug, error, info, warn};
 
 const MCPX_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -79,19 +79,27 @@ fn handle_client_message(raw: &str, state: &mut ProxyState) -> InterceptResult {
         if req.method == "tools/call" {
             if let Some(params) = &req.params {
                 if let Ok(call) = serde_json::from_value::<ToolCallParams>(params.clone()) {
-                    if state.blocked_tools.contains(&call.name) {
+                    if let Some(reason) = state.blocked_tools.get(&call.name) {
                         warn!(
                             tool = %call.name,
-                            "Blocking tools/call — tool has breaking schema changes"
+                            reason_code = reason.code,
+                            event_id = ?reason.event_id,
+                            "Blocking tools/call — tool is blocked"
                         );
-                        let err_response = Response::error(
+                        let err_response = Response::error_with_data(
                             req.id.clone(),
                             -32001,
-                            format!(
-                                "[mcpx] Tool '{}' is blocked due to breaking schema changes detected since baseline. \
-                                 Run `mcpx baselines delete <server>` to re-pin, or review changes with `mcpx diff`.",
-                                call.name
-                            ),
+                            format!("[mcpx] Tool '{}' is blocked: {}", call.name, reason.message),
+                            Some(serde_json::json!({
+                                "reason_code": reason.code,
+                                "event_id": reason.event_id,
+                                "tool_name": call.name,
+                                "remediation_steps": [
+                                    "Run `mcpx diff` to review detected drift details",
+                                    "Run `mcpx events list <server>` to inspect the recorded event",
+                                    "If expected, run `mcpx baselines delete <server>` and reconnect to re-pin"
+                                ]
+                            })),
                         );
                         let json = serde_json::to_string(&err_response).unwrap();
                         return InterceptResult::Inject(json);
@@ -184,15 +192,17 @@ fn handle_tools_list(
 
                 // Record the event.
                 let detail = serde_json::to_value(&report).ok();
-                let _ = store.record_event(
-                    &server_name,
-                    if report.has_breaking() {
-                        "breaking_change"
-                    } else {
-                        "schema_change"
-                    },
-                    detail.as_ref(),
-                );
+                let event_id = store
+                    .record_event(
+                        &server_name,
+                        if report.has_breaking() {
+                            "breaking_change"
+                        } else {
+                            "schema_change"
+                        },
+                        detail.as_ref(),
+                    )
+                    .ok();
 
                 // Run poisoning detection on description changes.
                 for d in &report.diffs {
@@ -224,9 +234,14 @@ fn handle_tools_list(
                                     }
                                     eprintln!("[mcpx]     Old: \"{}\"", truncate_desc(old, 80));
                                     eprintln!("[mcpx]     New: \"{}\"", truncate_desc(new, 80));
-                                    if !state.blocked_tools.contains(&d.tool_name) {
-                                        state.blocked_tools.push(d.tool_name.clone());
-                                    }
+                                    state.blocked_tools.insert(
+                                        d.tool_name.clone(),
+                                        BlockReason {
+                                            code: "prompt_poisoning_detected",
+                                            message: "description drift matched prompt-injection patterns".to_string(),
+                                            event_id,
+                                        },
+                                    );
                                 }
                                 structural::Verdict::Suspicious => {
                                     eprintln!("[mcpx]");
@@ -250,10 +265,17 @@ fn handle_tools_list(
                 // Block tools with breaking changes.
                 if report.has_breaking() {
                     for d in &report.diffs {
-                        if d.severity == diff::Severity::Breaking
-                            && !state.blocked_tools.contains(&d.tool_name)
-                        {
-                            state.blocked_tools.push(d.tool_name.clone());
+                        if d.severity == diff::Severity::Breaking {
+                            state
+                                .blocked_tools
+                                .entry(d.tool_name.clone())
+                                .or_insert(BlockReason {
+                                    code: "breaking_schema_change",
+                                    message:
+                                        "breaking schema changes detected since pinned baseline"
+                                            .to_string(),
+                                    event_id,
+                                });
                         }
                     }
                 }
@@ -285,7 +307,14 @@ mod tests {
     #[test]
     fn blocked_tool_call_is_injected_with_error() {
         let mut state = ProxyState::new();
-        state.blocked_tools.push("search".into());
+        state.blocked_tools.insert(
+            "search".into(),
+            BlockReason {
+                code: "breaking_schema_change",
+                message: "breaking schema changes detected since pinned baseline".into(),
+                event_id: Some(42),
+            },
+        );
 
         let raw = r#"{
             "jsonrpc":"2.0",
@@ -297,7 +326,9 @@ mod tests {
         match handle_client_message(raw, &mut state) {
             InterceptResult::Inject(json) => {
                 let response: Response = serde_json::from_str(&json).unwrap();
-                assert_eq!(response.error.unwrap().code, -32001);
+                let error = response.error.unwrap();
+                assert_eq!(error.code, -32001);
+                assert_eq!(error.data.unwrap()["reason_code"], "breaking_schema_change");
             }
             _ => panic!("expected injected error response"),
         }

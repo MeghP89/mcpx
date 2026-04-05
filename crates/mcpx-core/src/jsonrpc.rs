@@ -85,6 +85,16 @@ impl Message {
 impl Response {
     /// Create an error response for a given request ID.
     pub fn error(id: RequestId, code: i64, message: impl Into<String>) -> Self {
+        Self::error_with_data(id, code, message, None)
+    }
+
+    /// Create an error response for a given request ID with structured `error.data`.
+    pub fn error_with_data(
+        id: RequestId,
+        code: i64,
+        message: impl Into<String>,
+        data: Option<serde_json::Value>,
+    ) -> Self {
         Self {
             jsonrpc: "2.0".into(),
             id,
@@ -92,7 +102,7 @@ impl Response {
             error: Some(RpcError {
                 code,
                 message: message.into(),
-                data: None,
+                data,
             }),
         }
     }

@@ -1174,7 +1174,7 @@ dependencies = [
 
 [[package]]
 name = "mcpx"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "anyhow",
  "chrono",
@@ -1193,7 +1193,7 @@ dependencies = [
 
 [[package]]
 name = "mcpx-core"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "blake3",
  "chrono",
@@ -1204,7 +1204,7 @@ dependencies = [
 
 [[package]]
 name = "mcpx-poison"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "mcpx-core",
  "mcpx-poison-ml",
@@ -1217,7 +1217,7 @@ dependencies = [
 
 [[package]]
 name = "mcpx-poison-ml"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "anyhow",
  "hf-hub",
@@ -1228,7 +1228,7 @@ dependencies = [
 
 [[package]]
 name = "mcpx-schema"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "mcpx-core",
  "serde",
@@ -1240,7 +1240,7 @@ dependencies = [
 
 [[package]]
 name = "mcpx-store"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "anyhow",
  "chrono",
@@ -1255,7 +1255,7 @@ dependencies = [
 
 [[package]]
 name = "mcpx-transport"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "anyhow",
  "futures-util",
