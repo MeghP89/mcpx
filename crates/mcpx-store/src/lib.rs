@@ -251,6 +251,7 @@ mod tests {
                 annotations: None,
                 description_hash: "abc".into(),
                 schema_hash: "def".into(),
+                output_schema_hash: "ghi".into(),
             }],
             pinned_at: Utc::now(),
             mcpx_version: "0.1.0".into(),
