@@ -1,5 +1,4 @@
 /target
-Cargo.lock
 *.db
 .mcpx/
 ARCHITECTURE.md

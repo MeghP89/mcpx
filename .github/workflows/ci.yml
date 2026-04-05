@@ -41,23 +41,6 @@ jobs:
       - name: Check all targets
         run: cargo check --workspace --all-targets
 
-  build:
-    name: build
-    needs: test
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Cache cargo artifacts
-        uses: Swatinem/rust-cache@v2
-
-      - name: Build workspace (release)
-        run: cargo build --workspace --release
-
   build-matrix:
     name: Build (${{ matrix.os }})
     needs: test
