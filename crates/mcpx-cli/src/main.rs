@@ -7,6 +7,7 @@ const CLI_AFTER_HELP: &str = "\
 Examples:
   mcpx run -- uv run main.py
   mcpx run -- npx -y @modelcontextprotocol/server-github
+  mcpx run --upstream https://example.com/mcp -H \"Authorization: Bearer abc123\"
   mcpx baselines list
   mcpx baselines show MyTestServer
   mcpx diff MyTestServer
@@ -39,10 +40,16 @@ struct Cli {
 enum Commands {
     /// Run as a transparent proxy wrapping an MCP server
     Run {
+        /// Connect to a remote MCP server over HTTP instead of spawning a local process
+        #[arg(long)]
+        upstream: Option<String>,
+        /// Custom headers to include in HTTP requests when using --upstream. Format: "Header-Name: value"
+        #[arg(long, short = 'H')]
+        header: Vec<String>,
         /// The command and arguments to spawn the MCP server.
         /// Separate from mcpx args with --.
         /// Example: mcpx run -- npx -y @modelcontextprotocol/server-github
-        #[arg(trailing_var_arg = true, required = true)]
+        #[arg(trailing_var_arg = true)]
         command: Vec<String>,
     },
 
@@ -101,8 +108,12 @@ async fn main() -> anyhow::Result<()> {
         .init();
 
     match cli.command {
-        Commands::Run { command } => {
-            commands::run::execute(&command).await?;
+        Commands::Run {
+            upstream,
+            header,
+            command,
+        } => {
+            commands::run::execute(&upstream, &header, &command).await?;
         }
         Commands::Baselines { action } => match action {
             BaselinesAction::List => commands::baselines::list()?,
@@ -153,8 +164,14 @@ mod tests {
     fn parses_run_with_trailing_args() {
         let cli = Cli::try_parse_from(["mcpx", "run", "--", "echo", "hello"]).unwrap();
         match cli.command {
-            Commands::Run { command } => {
+            Commands::Run {
+                command,
+                header,
+                upstream,
+            } => {
                 assert_eq!(command, vec!["echo".to_string(), "hello".to_string()]);
+                assert_eq!(header, Vec::<String>::new());
+                assert_eq!(upstream, None);
             }
             _ => panic!("expected run command"),
         }

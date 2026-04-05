@@ -7,6 +7,7 @@ use mcpx_core::snapshot::ToolSnapshot;
 use tokio::sync::Mutex;
 use tracing::{debug, info};
 
+use crate::http;
 use crate::stdio;
 
 /// Tracks state needed by the interceptor across the proxy lifetime.
@@ -138,6 +139,82 @@ pub async fn run_stdio_proxy(
 
     info!("mcpx proxy shutting down");
     let _ = transport.kill().await;
+    Ok(())
+}
+
+/// Run an HTTP proxy that forwards to an upstream MCP server.
+/// This is a simpler code path used when the downstream server is remote.
+pub async fn run_http_proxy(
+    upstream_url: &str,
+    header_args: &[String],
+    interceptor: InterceptFn,
+) -> anyhow::Result<()> {
+    let mut transport = http::HttpTransport::connect(upstream_url, header_args).await?;
+    let mut client_rx = stdio::read_client_stdin();
+
+    let state = Arc::new(Mutex::new(ProxyState::new()));
+
+    info!(
+        upstream_url = upstream_url,
+        "mcpx HTTP remote server proxy started"
+    );
+
+    loop {
+        tokio::select! {
+            // Message from client → intercept → forward to server
+            Some(msg) = client_rx.recv() => {
+                let mut st = state.lock().await;
+
+                // Track request IDs so we can identify responses.
+                if let Ok(Message::Request(req)) = serde_json::from_str::<Message>(&msg) {
+                    let id_key = format!("{:?}", req.id);
+                    st.pending_requests.insert(id_key, req.method);
+                }
+
+                match (interceptor)(&msg, Direction::ClientToServer, &mut st) {
+                    InterceptResult::Forward(m) => {
+                        if transport.tx_to_server.send(m).await.is_err() {
+                            debug!("Server channel closed, exiting");
+                            break;
+                        }
+                    }
+                    InterceptResult::Suppress => {
+                        debug!("Suppressed client→server message");
+                    }
+                    InterceptResult::Inject(response) => {
+                        stdio::write_client_stdout(&response).await?;
+                    }
+                }
+            }
+
+            // Message from server → intercept → forward to client
+            Some(msg) = transport.rx_from_server.recv() => {
+                let mut st = state.lock().await;
+
+                match (interceptor)(&msg, Direction::ServerToClient, &mut st) {
+                    InterceptResult::Forward(m) => {
+                        stdio::write_client_stdout(&m).await?;
+                    }
+                    InterceptResult::Suppress => {
+                        debug!("Suppressed server→client message");
+                    }
+                    InterceptResult::Inject(response) => {
+                        // Unusual for server→client direction, but supported.
+                        stdio::write_client_stdout(&response).await?;
+                    }
+                }
+            }
+
+            // Both channels closed
+            else => {
+                debug!("All channels closed, exiting proxy loop");
+                break;
+            }
+        }
+    }
+
+    info!("mcpx HTTP proxy shutting down");
+    transport.shutdown().await?;
     Ok(())
 }
 
