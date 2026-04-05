@@ -15,7 +15,7 @@ Examples:
   mcpx events MyTestServer --limit 50
   mcpx shims list MyTestServer
   mcpx shims approve MyTestServer search
-
+  mcpx ci scan --baseline MyTestServer --target ./live-schema.json --format sarif --out report.sarif
 Workflow:
   1) Run your MCP server through `mcpx run -- ...`
   2) First `tools/list` auto-pins a baseline
@@ -85,6 +85,12 @@ enum Commands {
         #[command(subcommand)]
         action: ShimsAction,
     },
+
+    /// CI/CD pipeline integration and schema scanning
+    Ci {
+        #[command(subcommand)]
+        action: CiAction,
+    },
 }
 
 #[derive(Subcommand)]
@@ -116,6 +122,38 @@ enum ShimsAction {
         server_name: String,
         /// Tool name
         tool_name: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum CiAction {
+    /// Scan a target schema against a baseline for CI reporting
+    Scan {
+        /// Path or name of the pinned baseline
+        #[arg(long)]
+        baseline: String,
+
+        /// Path to the live/target schema to check
+        #[arg(long)]
+        target: String,
+
+        /// Output format (json, sarif, or both)
+        #[arg(long, default_value = "json")]
+        format: String,
+
+        /// Output file path (prints to stdout if omitted)
+        #[arg(long)]
+        out: Option<std::path::PathBuf>,
+
+        /// Minimum severity that triggers a non-zero exit code (warning, breaking, blocked)
+        #[arg(long, default_value = "breaking")]
+        fail_on: String,
+        /// Suppress one or more rule IDs (repeatable), e.g. --suppress MCPX-POISON-PARAM-NAME
+        #[arg(long)]
+        suppress: Vec<String>,
+        /// Optional path to previous mcpx JSON report; when set, only new findings fail the build
+        #[arg(long)]
+        only_new_since: Option<std::path::PathBuf>,
     },
 }
 
@@ -161,6 +199,25 @@ async fn main() -> anyhow::Result<()> {
                 server_name,
                 tool_name,
             } => commands::shims::approve(&server_name, &tool_name)?,
+        },
+        Commands::Ci { action } => match action {
+            CiAction::Scan {
+                baseline,
+                target,
+                format,
+                out,
+                fail_on,
+                suppress,
+                only_new_since,
+            } => commands::ci::scan(
+                &baseline,
+                &target,
+                &format,
+                out,
+                &fail_on,
+                &suppress,
+                only_new_since,
+            )?,
         },
     }
 
@@ -224,6 +281,45 @@ mod tests {
                 _ => panic!("expected shims list command"),
             },
             _ => panic!("expected shims command"),
+        }
+    }
+
+    #[test]
+    fn parses_ci_scan() {
+        let cli = Cli::try_parse_from([
+            "mcpx",
+            "ci",
+            "scan",
+            "--baseline",
+            "demo-server",
+            "--target",
+            "./live-schema.json",
+            "--format",
+            "sarif",
+            "--fail-on",
+            "blocked",
+            "--suppress",
+            "MCPX-POISON-PARAM-NAME",
+        ])
+        .unwrap();
+        match cli.command {
+            Commands::Ci { action } => match action {
+                CiAction::Scan {
+                    baseline,
+                    target,
+                    format,
+                    fail_on,
+                    suppress,
+                    ..
+                } => {
+                    assert_eq!(baseline, "demo-server");
+                    assert_eq!(target, "./live-schema.json");
+                    assert_eq!(format, "sarif");
+                    assert_eq!(fail_on, "blocked");
+                    assert_eq!(suppress, vec!["MCPX-POISON-PARAM-NAME".to_string()]);
+                }
+            },
+            _ => panic!("expected ci command"),
         }
     }
 }

@@ -1,0 +1,18 @@
+{
+  "tools": [
+    {
+      "name": "search",
+      "description": "Search for items by query.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "q": {
+            "type": "string",
+            "description": "Query text."
+          }
+        },
+        "required": ["q"]
+      }
+    }
+  ]
+}

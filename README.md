@@ -95,6 +95,9 @@ mcpx diff <name>             # Show schema drift
 mcpx events <name>           # Show recent audit events
 mcpx shims list <name>       # Show shim proposals/decisions for a server
 mcpx shims approve <name> <tool> # Approve latest proposal for a tool
+mcpx ci scan --baseline <baseline> --target <target> --format json|sarif|both
+mcpx ci scan ... --suppress <RULE_ID> [--suppress <RULE_ID> ...]
+mcpx ci scan ... --only-new-since <previous-mcpx-report.json>
 ```
 
 ## What Gets Detected
@@ -170,6 +173,36 @@ mcpx shims approve MyServer search
 
 All proposals/approvals are recorded in SQLite and reflected in `mcpx events`.
 
+## CI Export (JSON/SARIF)
+
+`mcpx ci scan` supports:
+- JSON export for machine processing
+- SARIF export for native GitHub code scanning integration
+- fail thresholds via `--fail-on warning|breaking|blocked`
+- rule suppressions via repeatable `--suppress <RULE_ID>`
+- baseline-delta mode via `--only-new-since <previous-report.json>` (fail only on new findings)
+
+Supported rule IDs:
+- `MCPX-BREAKING-SCHEMA`
+- `MCPX-POISON-TOOL-DESC`
+- `MCPX-POISON-PARAM-NAME`
+- `MCPX-POISON-PARAM-DESC`
+- `MCPX-SHIM-REQUIRES-APPROVAL`
+- `MCPX-SHIM-NONTRIVIAL`
+
+Example:
+
+```bash
+mcpx ci scan \
+  --baseline .github/ci/mcpx-baseline.json \
+  --target .github/ci/mcpx-target.json \
+  --format sarif \
+  --out artifacts/mcpx-ci.sarif \
+  --fail-on blocked
+```
+
+SARIF results include rule metadata and physical locations (artifact URI + line) so code scanning systems can render actionable alerts.
+
 ## Architecture
 
 mcpx is built as a Rust workspace with focused crates:
@@ -211,7 +244,7 @@ Starter feature ideas:
 ## Roadmap
 
 - [x] v0.1 — stdio proxy, auto-baseline, schema diffing, poisoning detection (levels 1+2), blocking
-- [ ] v0.2 — ~~HTTP/SSE transport~~, ~~auto-shimming (backwards-compatible request rewriting)~~, CI export (JSON/SARIF)
+- [x] v0.2 — ~~HTTP/SSE transport~~, ~~auto-shimming (backwards-compatible request rewriting)~~, ~~CI export (JSON/SARIF)~~
 - [ ] v0.3 — ~~semantic similarity (local embeddings)~~, TUI dashboard, `mcpdiff` baseline format interop
 - [ ] v0.4 — multi-server composition, policy-as-code (TOML config), Homebrew tap
 
