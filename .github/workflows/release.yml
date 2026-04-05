@@ -30,15 +30,23 @@ jobs:
       - name: Build mcpx
         run: cargo build --release -p mcpx
 
-      - name: Package binary
+      - name: Package binary and generate checksum
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p dist
           if [[ "${{ runner.os }}" == "Windows" ]]; then
-            cp target/release/mcpx.exe "dist/mcpx-${{ runner.os }}-${{ runner.arch }}.exe"
+            BINARY_NAME="mcpx-${{ runner.os }}-${{ runner.arch }}.exe"
+            cp target/release/mcpx.exe "dist/${BINARY_NAME}"
           else
-            cp target/release/mcpx "dist/mcpx-${{ runner.os }}-${{ runner.arch }}"
+            BINARY_NAME="mcpx-${{ runner.os }}-${{ runner.arch }}"
+            cp target/release/mcpx "dist/${BINARY_NAME}"
+          fi
+          cd dist
+          if command -v sha256sum &>/dev/null; then
+            sha256sum "${BINARY_NAME}" > "${BINARY_NAME}.sha256"
+          else
+            shasum -a 256 "${BINARY_NAME}" > "${BINARY_NAME}.sha256"
           fi
 
       - name: Upload artifact
@@ -53,13 +61,60 @@ jobs:
     needs: build-binaries
     runs-on: ubuntu-latest
     steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
       - name: Download artifacts
         uses: actions/download-artifact@v4
         with:
           path: release-artifacts
           merge-multiple: true
 
+      - name: Combine checksums
+        working-directory: release-artifacts
+        run: |
+          cat *.sha256 > checksums.txt
+          echo "## SHA256 Checksums"
+          cat checksums.txt
+
+      - name: Generate release notes
+        id: release-notes
+        run: |
+          # Find the previous tag
+          CURRENT_TAG="${GITHUB_REF#refs/tags/}"
+          PREVIOUS_TAG=$(git tag --sort=-v:refname | grep -v "^${CURRENT_TAG}$" | head -n 1)
+
+          if [ -z "${PREVIOUS_TAG}" ]; then
+            RANGE="HEAD"
+          else
+            RANGE="${PREVIOUS_TAG}..${CURRENT_TAG}"
+          fi
+
+          # Build release notes from commit history
+          {
+            echo "body<<RELEASE_NOTES_EOF"
+            echo "## What's Changed"
+            echo ""
+            git log "${RANGE}" --pretty=format:"- %s (%h)" --no-merges
+            echo ""
+            echo ""
+            echo "## Checksums"
+            echo ""
+            echo '```'
+            cat release-artifacts/checksums.txt
+            echo '```'
+            echo ""
+            echo "Verify a download:"
+            echo '```bash'
+            echo 'sha256sum -c checksums.txt'
+            echo '```'
+            echo "RELEASE_NOTES_EOF"
+          } >> "$GITHUB_OUTPUT"
+
       - name: Create or update release
         uses: softprops/action-gh-release@v2
         with:
+          body: ${{ steps.release-notes.outputs.body }}
           files: release-artifacts/*
