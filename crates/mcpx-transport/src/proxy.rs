@@ -32,6 +32,8 @@ pub struct ProxyState {
     pub baseline: Option<Vec<ToolSnapshot>>,
     /// Tools that have been blocked, with the reason for each.
     pub blocked_tools: HashMap<String, BlockReason>,
+    /// Approved shim mappings to apply on `tools/call`.
+    pub approved_shims: HashMap<String, HashMap<String, String>>,
     /// Whether the baseline has been set (first connection complete).
     pub baseline_pinned: bool,
 }
@@ -43,6 +45,7 @@ impl ProxyState {
             server_info: None,
             baseline: None,
             blocked_tools: HashMap::new(),
+            approved_shims: HashMap::new(),
             baseline_pinned: false,
         }
     }
@@ -240,6 +243,7 @@ mod tests {
         assert!(state.server_info.is_none());
         assert!(state.baseline.is_none());
         assert!(state.blocked_tools.is_empty());
+        assert!(state.approved_shims.is_empty());
         assert!(!state.baseline_pinned);
     }
 

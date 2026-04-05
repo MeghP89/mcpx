@@ -17,6 +17,17 @@ pub struct AuditEvent {
     pub created_at: DateTime<Utc>,
 }
 
+#[derive(Debug, Clone)]
+pub struct ShimDecision {
+    pub id: i64,
+    pub server_name: String,
+    pub tool_name: String,
+    pub mappings: serde_json::Value,
+    pub status: String,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
 impl Store {
     /// Open (or create) the mcpx database at the given path.
     pub fn open(path: &Path) -> Result<Self> {
@@ -69,9 +80,20 @@ impl Store {
                 created_at TEXT NOT NULL
             );
 
+            CREATE TABLE IF NOT EXISTS shim_decisions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                server_name TEXT NOT NULL,
+                tool_name TEXT NOT NULL,
+                mappings_json TEXT NOT NULL,
+                status TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+
             CREATE INDEX IF NOT EXISTS idx_baselines_server ON baselines(server_name);
             CREATE INDEX IF NOT EXISTS idx_snapshots_server ON snapshots(server_name);
             CREATE INDEX IF NOT EXISTS idx_events_server ON events(server_name);
+            CREATE INDEX IF NOT EXISTS idx_shim_decisions_server_tool ON shim_decisions(server_name, tool_name);
             ",
             )
             .context("Failed to run database migrations")?;
@@ -223,6 +245,141 @@ impl Store {
         )?;
         Ok(count > 0)
     }
+
+    /// Record a shim decision (`proposed`, `approved`, `auto_approved`).
+    pub fn record_shim_decision(
+        &self,
+        server_name: &str,
+        tool_name: &str,
+        mappings: &serde_json::Value,
+        status: &str,
+    ) -> Result<i64> {
+        let now = Utc::now().to_rfc3339();
+        let mappings_json = serde_json::to_string(mappings)?;
+        self.conn.execute(
+            "INSERT INTO shim_decisions (server_name, tool_name, mappings_json, status, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            rusqlite::params![server_name, tool_name, mappings_json, status, now, now],
+        )?;
+        Ok(self.conn.last_insert_rowid())
+    }
+
+    /// Return status for an exact mappings proposal if one exists.
+    pub fn get_shim_status(
+        &self,
+        server_name: &str,
+        tool_name: &str,
+        mappings: &serde_json::Value,
+    ) -> Result<Option<String>> {
+        let mappings_json = serde_json::to_string(mappings)?;
+        let mut stmt = self.conn.prepare(
+            "SELECT status
+             FROM shim_decisions
+             WHERE server_name = ?1 AND tool_name = ?2 AND mappings_json = ?3
+             ORDER BY id DESC
+             LIMIT 1",
+        )?;
+        let result = stmt.query_row(
+            rusqlite::params![server_name, tool_name, mappings_json],
+            |row| row.get::<_, String>(0),
+        );
+        match result {
+            Ok(status) => Ok(Some(status)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    /// Approve the latest proposed shim for a tool.
+    pub fn approve_latest_shim(&self, server_name: &str, tool_name: &str) -> Result<bool> {
+        let now = Utc::now().to_rfc3339();
+        let mut stmt = self.conn.prepare(
+            "SELECT id
+             FROM shim_decisions
+             WHERE server_name = ?1 AND tool_name = ?2 AND status = 'proposed'
+             ORDER BY id DESC
+             LIMIT 1",
+        )?;
+        let id_result = stmt.query_row(rusqlite::params![server_name, tool_name], |row| {
+            row.get::<_, i64>(0)
+        });
+
+        let id = match id_result {
+            Ok(id) => id,
+            Err(rusqlite::Error::QueryReturnedNoRows) => return Ok(false),
+            Err(e) => return Err(e.into()),
+        };
+
+        self.conn.execute(
+            "UPDATE shim_decisions SET status = 'approved', updated_at = ?2 WHERE id = ?1",
+            rusqlite::params![id, now],
+        )?;
+        Ok(true)
+    }
+
+    /// List recorded shim decisions for a server.
+    pub fn list_shims(&self, server_name: &str) -> Result<Vec<ShimDecision>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, server_name, tool_name, mappings_json, status, created_at, updated_at
+             FROM shim_decisions
+             WHERE server_name = ?1
+             ORDER BY id DESC",
+        )?;
+
+        let rows = stmt.query_map([server_name], |row| {
+            let id: i64 = row.get(0)?;
+            let server_name: String = row.get(1)?;
+            let tool_name: String = row.get(2)?;
+            let mappings_json: String = row.get(3)?;
+            let status: String = row.get(4)?;
+            let created_at: String = row.get(5)?;
+            let updated_at: String = row.get(6)?;
+
+            let mappings: serde_json::Value =
+                serde_json::from_str(&mappings_json).map_err(|e| {
+                    rusqlite::Error::FromSqlConversionFailure(
+                        3,
+                        rusqlite::types::Type::Text,
+                        Box::new(e),
+                    )
+                })?;
+
+            let created_at = DateTime::parse_from_rfc3339(&created_at)
+                .map(|dt| dt.with_timezone(&Utc))
+                .map_err(|e| {
+                    rusqlite::Error::FromSqlConversionFailure(
+                        5,
+                        rusqlite::types::Type::Text,
+                        Box::new(e),
+                    )
+                })?;
+            let updated_at = DateTime::parse_from_rfc3339(&updated_at)
+                .map(|dt| dt.with_timezone(&Utc))
+                .map_err(|e| {
+                    rusqlite::Error::FromSqlConversionFailure(
+                        6,
+                        rusqlite::types::Type::Text,
+                        Box::new(e),
+                    )
+                })?;
+
+            Ok(ShimDecision {
+                id,
+                server_name,
+                tool_name,
+                mappings,
+                status,
+                created_at,
+                updated_at,
+            })
+        })?;
+
+        let mut out = Vec::new();
+        for row in rows {
+            out.push(row?);
+        }
+        Ok(out)
+    }
 }
 
 fn default_db_path() -> Result<PathBuf> {
@@ -251,6 +408,7 @@ mod tests {
                 annotations: None,
                 description_hash: "abc".into(),
                 schema_hash: "def".into(),
+                output_schema_hash: "ghi".into(),
             }],
             pinned_at: Utc::now(),
             mcpx_version: "0.1.0".into(),
@@ -316,5 +474,35 @@ mod tests {
         let limited = store.list_events("test-server", 1).unwrap();
         assert_eq!(limited.len(), 1);
         assert_eq!(limited[0].event_type, "breaking_change");
+    }
+
+    #[test]
+    fn record_and_approve_shim_decision() {
+        let tmp = NamedTempFile::new().unwrap();
+        let store = Store::open(tmp.path()).unwrap();
+
+        let mappings = serde_json::json!([{"from":"q","to":"query"}]);
+        store
+            .record_shim_decision("test-server", "search", &mappings, "proposed")
+            .unwrap();
+
+        let status = store
+            .get_shim_status("test-server", "search", &mappings)
+            .unwrap()
+            .unwrap();
+        assert_eq!(status, "proposed");
+
+        let approved = store.approve_latest_shim("test-server", "search").unwrap();
+        assert!(approved);
+
+        let status = store
+            .get_shim_status("test-server", "search", &mappings)
+            .unwrap()
+            .unwrap();
+        assert_eq!(status, "approved");
+
+        let shims = store.list_shims("test-server").unwrap();
+        assert_eq!(shims.len(), 1);
+        assert_eq!(shims[0].tool_name, "search");
     }
 }

@@ -1,6 +1,6 @@
 # mcpx
 
-**MCP Schema Guardian Proxy** — runtime detection of breaking schema changes, tool description poisoning, and backwards-compatible request translation for Model Context Protocol servers.
+**MCP Schema Guardian Proxy** — runtime detection of breaking schema changes, poisoning attempts, and controlled backwards-compatible request translation for Model Context Protocol servers.
 
 ## The Problem
 
@@ -29,9 +29,10 @@ mcpx is a transparent proxy that sits between your MCP client and server:
 On **first connection**, it snapshots every tool's schema and description as a pinned baseline. On **every subsequent connection**, it diffs the live schema against the baseline and:
 
 - **Detects breaking changes** — removed tools, new required params, type changes
-- **Detects description poisoning** — hidden Unicode characters, injection patterns, suspicious rewording
+- **Detects poisoning** — tool/parameter description injection, hidden Unicode, suspicious parameter names
 - **Blocks unsafe tool calls** — returns a clear error instead of letting the LLM hallucinate
 - **Logs everything** — full audit trail of every schema change over time
+- **Proposes safe shims** — trivial rename-only mappings can be approved or auto-approved
 
 ## Quick Start
 
@@ -49,6 +50,7 @@ On **first connection**, it snapshots every tool's schema and description as a p
 # Before:  "command": "npx", "args": ["-y", "@modelcontextprotocol/server-github"]
 # After:
 mcpx run -- npx -y @modelcontextprotocol/server-github
+mcpx run --auto-approve-shims -- npx -y @modelcontextprotocol/server-github
 
 # Or connect to a remote MCP server over HTTP/SSE
 mcpx run --upstream https://mcp.example.com/mcp
@@ -83,6 +85,7 @@ That's it. One line change. mcpx handles the rest.
 
 ```bash
 mcpx run -- <command>        # Proxy a local MCP server (stdio)
+mcpx run --auto-approve-shims -- <command> # Auto-approve/apply eligible trivial shims
 mcpx run --upstream <url>    # Proxy a remote MCP server (HTTP/SSE)
 mcpx run --upstream <url> -H "Header: value"  # With custom headers
 mcpx baselines list          # Show pinned baselines
@@ -90,6 +93,8 @@ mcpx baselines show <name>   # Show baseline details
 mcpx baselines delete <name> # Re-pin on next connection
 mcpx diff <name>             # Show schema drift
 mcpx events <name>           # Show recent audit events
+mcpx shims list <name>       # Show shim proposals/decisions for a server
+mcpx shims approve <name> <tool> # Approve latest proposal for a tool
 ```
 
 ## What Gets Detected
@@ -103,12 +108,19 @@ mcpx events <name>           # Show recent audit events
 | Description changed | Warning | Poisoning analysis |
 | Hidden Unicode in description | Blocked | Block calls |
 | Injection patterns in description | Blocked | Block calls |
+| Suspicious parameter name (e.g. `system_override_instruction`) | Blocked | Block calls |
+| Injection/hidden chars in parameter description | Blocked | Block calls |
+| Trivial rename drift (`file_path` -> `filepath`) | Proposed | Require approval (or auto-approve) |
+| Non-trivial drift (`user_id` -> `admin_token`) | Blocked | Manual baseline update |
 | New tool added | Safe | Log |
 | Optional param added | Safe | Log |
 
 ## Poisoning Detection
 
-mcpx scans tool descriptions for:
+mcpx scans:
+- Tool descriptions
+- Parameter names
+- Parameter descriptions
 
 **Level 1** (always on): BLAKE3 hash comparison — any change is flagged.
 
@@ -118,6 +130,7 @@ mcpx scans tool descriptions for:
 - Data exfiltration patterns (`"send to https://..."`)
 - Hidden Unicode characters (zero-width spaces, RTL overrides)
 - BCC exfiltration (the Postmark MCP attack pattern)
+- High-risk parameter name tokens (`exec`, `eval`, `system`, `prompt`, `override`, etc.)
 
 **Level 3** (opt-in, `--ml` flag): Semantic similarity — uses a local [all-MiniLM-L6-v2](https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2) embedding model (~80MB, downloaded once) to detect meaning-preserving rewording that evades structural checks. Descriptions with semantic similarity below 0.80 are flagged as suspicious.
 
@@ -129,13 +142,41 @@ mcpx scans tool descriptions for:
 cargo install --path crates/mcpx-cli --features ml
 ```
 
+## Auto-Shimming (Safe Mode)
+
+Shimming is intentionally constrained to avoid turning the proxy into a confused deputy.
+
+Pipeline order is strict:
+1. Run poisoning checks first.
+2. If poisoning is detected, block and do not shim.
+3. If clean, evaluate trivial drift and generate shim proposals.
+
+Current shim rules:
+- Only rename-only, trivial mappings are eligible.
+- Type compatibility is required.
+- Ambiguous/non-trivial mappings are blocked.
+- Runtime rewrite blocks on key conflicts and validates mapped values for sensitive targets.
+
+Approval modes:
+- **Default (recommended):** proposal-only. Tool is blocked with `shim_requires_approval` until you approve.
+- **Auto mode:** `--auto-approve-shims` auto-approves and applies eligible trivial shims.
+
+Manual approval workflow:
+
+```bash
+mcpx shims list MyServer
+mcpx shims approve MyServer search
+```
+
+All proposals/approvals are recorded in SQLite and reflected in `mcpx events`.
+
 ## Architecture
 
 mcpx is built as a Rust workspace with focused crates:
 
 - **mcpx-core** — JSON-RPC 2.0 and MCP protocol types, snapshot capture
 - **mcpx-transport** — stdio and HTTP/SSE bidirectional proxy, message pump
-- **mcpx-schema** — recursive JSON Schema diffing, severity classification
+- **mcpx-schema** — recursive JSON Schema diffing, constrained shim proposal/rewrite engine
 - **mcpx-poison** — structural similarity analysis, injection pattern detection
 - **mcpx-poison-ml** — (optional) semantic similarity via ONNX embedding model
 - **mcpx-store** — SQLite storage for baselines, snapshots, audit logs
@@ -170,7 +211,7 @@ Starter feature ideas:
 ## Roadmap
 
 - [x] v0.1 — stdio proxy, auto-baseline, schema diffing, poisoning detection (levels 1+2), blocking
-- [ ] v0.2 — ~~HTTP/SSE transport~~, auto-shimming (backwards-compatible request rewriting), CI export (JSON/SARIF)
+- [ ] v0.2 — ~~HTTP/SSE transport~~, ~~auto-shimming (backwards-compatible request rewriting)~~, CI export (JSON/SARIF)
 - [ ] v0.3 — ~~semantic similarity (local embeddings)~~, TUI dashboard, `mcpdiff` baseline format interop
 - [ ] v0.4 — multi-server composition, policy-as-code (TOML config), Homebrew tap
 

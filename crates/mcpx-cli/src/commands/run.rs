@@ -9,6 +9,7 @@ pub async fn execute(
     upstream: &Option<String>,
     header_args: &[String],
     command_args: &[String],
+    auto_approve_shims: bool,
 ) -> Result<()> {
     if upstream.is_some() && !command_args.is_empty() {
         bail!("Cannot use --upstream and a command at the same time. Use one or the other.");
@@ -21,7 +22,8 @@ pub async fn execute(
         );
     }
 
-    let interceptor = interceptor::build_interceptor()?;
+    let interceptor =
+        interceptor::build_interceptor(interceptor::InterceptorConfig { auto_approve_shims })?;
 
     match upstream {
         Some(url) => {
@@ -43,14 +45,15 @@ pub async fn execute(
 mod tests {
     #[tokio::test]
     async fn empty_command_args_returns_error() {
-        let result = super::execute(&None, &[], &[]).await;
+        let result = super::execute(&None, &[], &[], false).await;
         assert!(result.is_err());
     }
 
     #[tokio::test]
     async fn both_upstream_and_command_returns_error() {
         let args = vec!["echo".to_string()];
-        let result = super::execute(&Some("https://example.com/mcp".into()), &[], &args).await;
+        let result =
+            super::execute(&Some("https://example.com/mcp".into()), &[], &args, false).await;
         assert!(result.is_err());
     }
 }

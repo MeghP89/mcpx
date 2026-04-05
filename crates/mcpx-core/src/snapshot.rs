@@ -15,6 +15,8 @@ pub struct ToolSnapshot {
     pub description_hash: String,
     /// BLAKE3 hash of the canonicalized input_schema JSON (hex-encoded).
     pub schema_hash: String,
+    /// BLAKE3 hash of the canonicalized output_schema JSON (hex-encoded).
+    pub output_schema_hash: String,
 }
 
 /// A complete baseline for a server — all tools captured at one point in time.
@@ -44,6 +46,14 @@ impl ToolSnapshot {
         let schema_hash = blake3::hash(canonical_schema.as_bytes())
             .to_hex()
             .to_string();
+        let canonical_output_schema = canonicalize_json(
+            def.output_schema
+                .as_ref()
+                .unwrap_or(&serde_json::Value::Null),
+        );
+        let output_schema_hash = blake3::hash(canonical_output_schema.as_bytes())
+            .to_hex()
+            .to_string();
 
         Self {
             name: def.name.clone(),
@@ -53,6 +63,7 @@ impl ToolSnapshot {
             annotations: def.annotations.clone(),
             description_hash,
             schema_hash,
+            output_schema_hash,
         }
     }
 
@@ -63,11 +74,24 @@ impl ToolSnapshot {
         hash != self.description_hash
     }
 
-    /// Quick check: has the input schema changed since this snapshot?
+    /// Quick check: has either input or output schema changed since this snapshot?
     pub fn schema_changed(&self, current: &ToolDefinition) -> bool {
-        let canonical = canonicalize_json(&current.input_schema);
-        let hash = blake3::hash(canonical.as_bytes()).to_hex().to_string();
-        hash != self.schema_hash
+        let input_canonical = canonicalize_json(&current.input_schema);
+        let input_hash = blake3::hash(input_canonical.as_bytes())
+            .to_hex()
+            .to_string();
+
+        let output_canonical = canonicalize_json(
+            current
+                .output_schema
+                .as_ref()
+                .unwrap_or(&serde_json::Value::Null),
+        );
+        let output_hash = blake3::hash(output_canonical.as_bytes())
+            .to_hex()
+            .to_string();
+
+        input_hash != self.schema_hash || output_hash != self.output_schema_hash
     }
 }
 
@@ -146,6 +170,32 @@ mod tests {
             "type": "object",
             "properties": { "query": { "type": "string" } }
         });
+        assert!(snap.schema_changed(&modified));
+        assert!(!snap.schema_changed(&def));
+    }
+
+    #[test]
+    fn snapshot_detects_output_schema_change() {
+        let def = ToolDefinition {
+            name: "test".into(),
+            description: None,
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": { "q": { "type": "string" } }
+            }),
+            output_schema: Some(serde_json::json!({
+                "type": "object",
+                "properties": { "results": { "type": "array" } }
+            })),
+            annotations: None,
+        };
+        let snap = ToolSnapshot::from_definition(&def);
+
+        let mut modified = def.clone();
+        modified.output_schema = Some(serde_json::json!({
+            "type": "object",
+            "properties": { "items": { "type": "array" } }
+        }));
         assert!(snap.schema_changed(&modified));
         assert!(!snap.schema_changed(&def));
     }

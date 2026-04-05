@@ -18,6 +18,7 @@ on:
 
 permissions:
   contents: read
+  checks: write
 
 jobs:
   cargo-audit:
@@ -27,7 +28,21 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Run security audit
+      # audit-check creates GitHub Check Runs; this needs checks:write and
+      # is not available for forked PR tokens.
+      - name: Run security audit (check run mode)
+        if: ${{ github.event_name != 'pull_request' || !github.event.pull_request.head.repo.fork }}
         uses: rustsec/audit-check@v2
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
+
+      # Fallback path for forked PRs where Checks API write is unavailable.
+      - name: Install Rust toolchain
+        if: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork }}
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Run security audit (fork-safe mode)
+        if: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork }}
+        run: |
+          cargo install cargo-audit --locked
+          cargo audit
