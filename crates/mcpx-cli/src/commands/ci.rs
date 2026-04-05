@@ -6,7 +6,7 @@ use mcpx_schema::{diff, shim};
 use mcpx_store::Store;
 use serde::Serialize;
 use serde_json::{json, Value};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -37,6 +37,8 @@ struct CiFinding {
     field_path: String,
     message: String,
     details: Value,
+    source_uri: Option<String>,
+    source_line: Option<u64>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -93,15 +95,28 @@ pub fn scan(
     format: &str,
     out: Option<PathBuf>,
     fail_on: &str,
+    suppress: &[String],
+    only_new_since: Option<PathBuf>,
 ) -> Result<()> {
     let format = parse_format(format)?;
     let fail_on = parse_fail_on(fail_on)?;
 
     let baseline_data = load_baseline(baseline)?;
     let target_tools = load_target_tools(target)?;
-    let findings = analyze(&baseline_data, &target_tools);
+    let target_path = PathBuf::from(target);
+    let findings = analyze(&baseline_data, &target_tools, Some(&target_path));
+    let suppressed: HashSet<&str> = suppress.iter().map(String::as_str).collect();
+    let findings: Vec<CiFinding> = findings
+        .into_iter()
+        .filter(|f| !suppressed.contains(f.rule_id.as_str()))
+        .collect();
+    let findings = if let Some(prev_path) = only_new_since {
+        filter_only_new_findings(&findings, &prev_path)?
+    } else {
+        findings
+    };
     let output_json = build_json_report(&baseline_data.server_name, &findings, fail_on);
-    let output_sarif = build_sarif_report(&findings);
+    let output_sarif = build_sarif_report(&findings, Some(&target_path));
 
     write_outputs(format, out.as_deref(), &output_json, &output_sarif)?;
 
@@ -115,8 +130,14 @@ pub fn scan(
     Ok(())
 }
 
-fn analyze(baseline: &ServerBaseline, target_tools: &[ToolDefinition]) -> Vec<CiFinding> {
+fn analyze(
+    baseline: &ServerBaseline,
+    target_tools: &[ToolDefinition],
+    target_path: Option<&Path>,
+) -> Vec<CiFinding> {
     let mut findings = Vec::new();
+    let source_uri = target_path.map(|p| p.to_string_lossy().to_string());
+    let source_line = Some(1_u64);
 
     let report = diff::diff_tools(&baseline.server_name, &baseline.tools, target_tools);
     for d in report.diffs {
@@ -138,6 +159,8 @@ fn analyze(baseline: &ServerBaseline, target_tools: &[ToolDefinition]) -> Vec<Ci
                 "old_value": d.old_value,
                 "new_value": d.new_value,
             }),
+            source_uri: source_uri.clone(),
+            source_line,
         });
     }
 
@@ -168,6 +191,8 @@ fn analyze(baseline: &ServerBaseline, target_tools: &[ToolDefinition]) -> Vec<Ci
                             "structural_similarity": p.structural_similarity,
                             "semantic_similarity": p.semantic_similarity
                         }),
+                        source_uri: source_uri.clone(),
+                        source_line,
                     });
                 } else if matches!(p.verdict, structural::Verdict::Suspicious) {
                     findings.push(CiFinding {
@@ -182,6 +207,8 @@ fn analyze(baseline: &ServerBaseline, target_tools: &[ToolDefinition]) -> Vec<Ci
                             "structural_similarity": p.structural_similarity,
                             "semantic_similarity": p.semantic_similarity
                         }),
+                        source_uri: source_uri.clone(),
+                        source_line,
                     });
                 }
             }
@@ -199,6 +226,8 @@ fn analyze(baseline: &ServerBaseline, target_tools: &[ToolDefinition]) -> Vec<Ci
                     field_path: "inputSchema.properties".to_string(),
                     message: "trivial shim mapping proposed; approval required".to_string(),
                     details: json!({ "mappings": proposal.mappings }),
+                    source_uri: source_uri.clone(),
+                    source_line,
                 }),
                 shim::ShimProposalAction::Blocked => {
                     let reason = proposal.reason.clone();
@@ -213,6 +242,8 @@ fn analyze(baseline: &ServerBaseline, target_tools: &[ToolDefinition]) -> Vec<Ci
                             .clone()
                             .unwrap_or_else(|| "non-trivial shim drift detected".to_string()),
                         details: json!({ "reason": reason }),
+                        source_uri: source_uri.clone(),
+                        source_line,
                     })
                 }
             }
@@ -235,6 +266,8 @@ fn analyze(baseline: &ServerBaseline, target_tools: &[ToolDefinition]) -> Vec<Ci
                             "injection_patterns": pn.injection_patterns,
                             "hidden_chars": pn.hidden_chars
                         }),
+                        source_uri: source_uri.clone(),
+                        source_line,
                     });
                 }
 
@@ -258,6 +291,8 @@ fn analyze(baseline: &ServerBaseline, target_tools: &[ToolDefinition]) -> Vec<Ci
                                 "injection_patterns": pd.injection_patterns,
                                 "hidden_chars": pd.hidden_chars
                             }),
+                            source_uri: source_uri.clone(),
+                            source_line,
                         });
                     }
                 }
@@ -288,32 +323,51 @@ fn build_json_report(server_name: &str, findings: &[CiFinding], fail_on: FailOn)
     })
 }
 
-fn build_sarif_report(findings: &[CiFinding]) -> Value {
+fn build_sarif_report(findings: &[CiFinding], default_source_uri: Option<&Path>) -> Value {
     let rules: Vec<Value> = vec![
         (
             "MCPX-BREAKING-SCHEMA",
             "Schema drift that may break tool calls",
+            "https://github.com/meghsatpat/mcpx#what-gets-detected",
         ),
         (
             "MCPX-POISON-TOOL-DESC",
             "Tool description poisoning indicator",
+            "https://github.com/meghsatpat/mcpx#poisoning-detection",
         ),
         (
             "MCPX-POISON-PARAM-NAME",
             "Parameter name poisoning indicator",
+            "https://github.com/meghsatpat/mcpx#poisoning-detection",
         ),
         (
             "MCPX-POISON-PARAM-DESC",
             "Parameter description poisoning indicator",
+            "https://github.com/meghsatpat/mcpx#poisoning-detection",
         ),
         (
             "MCPX-SHIM-REQUIRES-APPROVAL",
             "Trivial shim proposal requires explicit approval",
+            "https://github.com/meghsatpat/mcpx#auto-shimming-safe-mode",
         ),
-        ("MCPX-SHIM-NONTRIVIAL", "Non-trivial shim drift is blocked"),
+        (
+            "MCPX-SHIM-NONTRIVIAL",
+            "Non-trivial shim drift is blocked",
+            "https://github.com/meghsatpat/mcpx#auto-shimming-safe-mode",
+        ),
     ]
     .into_iter()
-    .map(|(id, name)| json!({"id": id, "name": name}))
+    .map(|(id, name, help_uri)| {
+        json!({
+            "id": id,
+            "name": name,
+            "shortDescription": {"text": name},
+            "helpUri": help_uri,
+            "properties": {
+                "tags": ["security", "mcp", "schema-drift", "poisoning"]
+            }
+        })
+    })
     .collect();
 
     let results: Vec<Value> = findings
@@ -324,11 +378,21 @@ fn build_sarif_report(findings: &[CiFinding]) -> Value {
                 FindingSeverity::Breaking => "error",
                 FindingSeverity::Blocked => "error",
             };
+            let source_uri = f
+                .source_uri
+                .clone()
+                .or_else(|| default_source_uri.map(|p| p.to_string_lossy().to_string()))
+                .unwrap_or_else(|| "unknown".to_string());
+            let source_line = f.source_line.unwrap_or(1);
             json!({
                 "ruleId": f.rule_id,
                 "level": level,
                 "message": { "text": f.message },
                 "locations": [{
+                    "physicalLocation": {
+                        "artifactLocation": { "uri": source_uri },
+                        "region": { "startLine": source_line }
+                    },
                     "logicalLocations": [{
                         "fullyQualifiedName": format!("{}.{}", f.tool_name, f.field_path)
                     }]
@@ -356,6 +420,38 @@ fn build_sarif_report(findings: &[CiFinding]) -> Value {
             "results": results
         }]
     })
+}
+
+fn filter_only_new_findings(
+    findings: &[CiFinding],
+    previous_report_path: &Path,
+) -> Result<Vec<CiFinding>> {
+    let raw = std::fs::read_to_string(previous_report_path).with_context(|| {
+        format!(
+            "Failed reading previous report file {}",
+            previous_report_path.display()
+        )
+    })?;
+    let v: Value = serde_json::from_str(&raw).with_context(|| {
+        format!(
+            "Failed parsing previous report file {} as JSON",
+            previous_report_path.display()
+        )
+    })?;
+    let previous_ids: HashSet<String> = v
+        .get("findings")
+        .and_then(|f| f.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|f| f.get("id").and_then(|id| id.as_str()).map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_default();
+    Ok(findings
+        .iter()
+        .filter(|f| !previous_ids.contains(&f.id))
+        .cloned()
+        .collect())
 }
 
 fn write_outputs(
@@ -502,7 +598,16 @@ mod tests {
 
     #[test]
     fn command_symbol_exists() {
-        let _ = super::scan as fn(&str, &str, &str, Option<std::path::PathBuf>, &str) -> Result<()>;
+        let _ = super::scan
+            as fn(
+                &str,
+                &str,
+                &str,
+                Option<std::path::PathBuf>,
+                &str,
+                &[String],
+                Option<std::path::PathBuf>,
+            ) -> Result<()>;
     }
 
     #[test]
@@ -529,5 +634,68 @@ mod tests {
         let tools = parse_target_tools_json(raw).unwrap();
         assert_eq!(tools.len(), 1);
         assert_eq!(tools[0].name, "search");
+    }
+
+    #[test]
+    fn filters_only_new_findings() {
+        let old_report = json!({
+            "findings": [{"id":"existing:1"}]
+        });
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("old.json");
+        std::fs::write(&path, serde_json::to_vec(&old_report).unwrap()).unwrap();
+
+        let findings = vec![
+            CiFinding {
+                id: "existing:1".to_string(),
+                rule_id: "MCPX-BREAKING-SCHEMA".to_string(),
+                severity: FindingSeverity::Warning,
+                category: "schema_drift".to_string(),
+                tool_name: "search".to_string(),
+                field_path: "description".to_string(),
+                message: "x".to_string(),
+                details: json!({}),
+                source_uri: None,
+                source_line: None,
+            },
+            CiFinding {
+                id: "new:2".to_string(),
+                rule_id: "MCPX-BREAKING-SCHEMA".to_string(),
+                severity: FindingSeverity::Warning,
+                category: "schema_drift".to_string(),
+                tool_name: "search".to_string(),
+                field_path: "description".to_string(),
+                message: "x".to_string(),
+                details: json!({}),
+                source_uri: None,
+                source_line: None,
+            },
+        ];
+        let filtered = filter_only_new_findings(&findings, &path).unwrap();
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0].id, "new:2");
+    }
+
+    #[test]
+    fn sarif_contains_physical_location_and_rule_help() {
+        let findings = vec![CiFinding {
+            id: "a".to_string(),
+            rule_id: "MCPX-POISON-PARAM-NAME".to_string(),
+            severity: FindingSeverity::Blocked,
+            category: "poisoning".to_string(),
+            tool_name: "search".to_string(),
+            field_path: "inputSchema.properties.q".to_string(),
+            message: "bad".to_string(),
+            details: json!({}),
+            source_uri: Some("schemas/target.json".to_string()),
+            source_line: Some(1),
+        }];
+        let sarif = build_sarif_report(&findings, None);
+        assert!(sarif["runs"][0]["tool"]["driver"]["rules"][0]["helpUri"].is_string());
+        assert_eq!(
+            sarif["runs"][0]["results"][0]["locations"][0]["physicalLocation"]["artifactLocation"]
+                ["uri"],
+            "schemas/target.json"
+        );
     }
 }

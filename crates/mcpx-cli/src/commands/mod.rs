@@ -12,8 +12,16 @@ mod tests {
     #[test]
     fn module_exports_are_accessible() {
         let _ = super::baselines::list as fn() -> Result<()>;
-        let _ =
-            super::ci::scan as fn(&str, &str, &str, Option<std::path::PathBuf>, &str) -> Result<()>;
+        let _ = super::ci::scan
+            as fn(
+                &str,
+                &str,
+                &str,
+                Option<std::path::PathBuf>,
+                &str,
+                &[String],
+                Option<std::path::PathBuf>,
+            ) -> Result<()>;
         let _ = super::diff::execute as fn(&str) -> Result<()>;
         let _ = super::events::list as fn(&str, usize) -> Result<()>;
         let _ = super::shims::list as fn(&str) -> Result<()>;

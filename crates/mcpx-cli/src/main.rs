@@ -148,6 +148,12 @@ enum CiAction {
         /// Minimum severity that triggers a non-zero exit code (warning, breaking, blocked)
         #[arg(long, default_value = "breaking")]
         fail_on: String,
+        /// Suppress one or more rule IDs (repeatable), e.g. --suppress MCPX-POISON-PARAM-NAME
+        #[arg(long)]
+        suppress: Vec<String>,
+        /// Optional path to previous mcpx JSON report; when set, only new findings fail the build
+        #[arg(long)]
+        only_new_since: Option<std::path::PathBuf>,
     },
 }
 
@@ -201,7 +207,17 @@ async fn main() -> anyhow::Result<()> {
                 format,
                 out,
                 fail_on,
-            } => commands::ci::scan(&baseline, &target, &format, out, &fail_on)?,
+                suppress,
+                only_new_since,
+            } => commands::ci::scan(
+                &baseline,
+                &target,
+                &format,
+                out,
+                &fail_on,
+                &suppress,
+                only_new_since,
+            )?,
         },
     }
 
@@ -282,6 +298,8 @@ mod tests {
             "sarif",
             "--fail-on",
             "blocked",
+            "--suppress",
+            "MCPX-POISON-PARAM-NAME",
         ])
         .unwrap();
         match cli.command {
@@ -291,12 +309,14 @@ mod tests {
                     target,
                     format,
                     fail_on,
+                    suppress,
                     ..
                 } => {
                     assert_eq!(baseline, "demo-server");
                     assert_eq!(target, "./live-schema.json");
                     assert_eq!(format, "sarif");
                     assert_eq!(fail_on, "blocked");
+                    assert_eq!(suppress, vec!["MCPX-POISON-PARAM-NAME".to_string()]);
                 }
             },
             _ => panic!("expected ci command"),

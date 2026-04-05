@@ -8,6 +8,7 @@ on:
 
 permissions:
   contents: read
+  security-events: write
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
@@ -61,3 +62,36 @@ jobs:
 
       - name: Build workspace (release)
         run: cargo build --workspace --release
+
+  ci-sarif:
+    name: CI Scan (SARIF)
+    runs-on: ubuntu-latest
+    # SARIF upload requires security-events:write, unavailable for fork PR tokens.
+    if: ${{ github.event_name != 'pull_request' || !github.event.pull_request.head.repo.fork }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo artifacts
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build mcpx
+        run: cargo build -p mcpx
+
+      - name: Run mcpx CI scan (SARIF)
+        run: |
+          mkdir -p artifacts
+          target/debug/mcpx ci scan \
+            --baseline .github/ci/mcpx-baseline.json \
+            --target .github/ci/mcpx-target.json \
+            --format sarif \
+            --out artifacts/mcpx-ci.sarif \
+            --fail-on blocked || true
+
+      - name: Upload SARIF
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: artifacts/mcpx-ci.sarif

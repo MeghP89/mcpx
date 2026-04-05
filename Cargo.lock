@@ -1186,6 +1186,7 @@ dependencies = [
  "mcpx-transport",
  "serde",
  "serde_json",
+ "tempfile",
  "tokio",
  "tracing",
  "tracing-subscriber",
