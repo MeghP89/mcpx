@@ -17,8 +17,13 @@ mcpx is a transparent proxy that sits between your MCP client and server:
 ```
 ┌────────────┐       ┌────────┐       ┌────────────┐
 │ Claude     │◄─────►│  mcpx  │◄─────►│ MCP Server │
-│ Desktop    │ stdio │        │ stdio │            │
+│ Desktop    │ stdio │        │ stdio │ (local)    │
 └────────────┘       └────────┘       └────────────┘
+
+┌────────────┐       ┌────────┐  HTTP/SSE  ┌────────────┐
+│ Claude     │◄─────►│  mcpx  │◄──────────►│ MCP Server │
+│ Desktop    │ stdio │        │            │ (remote)   │
+└────────────┘       └────────┘            └────────────┘
 ```
 
 On **first connection**, it snapshots every tool's schema and description as a pinned baseline. On **every subsequent connection**, it diffs the live schema against the baseline and:
@@ -43,6 +48,12 @@ On **first connection**, it snapshots every tool's schema and description as a p
 # Before:  "command": "npx", "args": ["-y", "@modelcontextprotocol/server-github"]
 # After:
 mcpx run -- npx -y @modelcontextprotocol/server-github
+
+# Or connect to a remote MCP server over HTTP/SSE
+mcpx run --upstream https://mcp.example.com/mcp
+
+# With custom headers (e.g. auth tokens)
+mcpx run --upstream https://mcp.example.com/mcp -H "Authorization: Bearer sk-..."
 ```
 
 In your Claude Desktop config (`claude_desktop_config.json`):
@@ -56,6 +67,10 @@ In your Claude Desktop config (`claude_desktop_config.json`):
       "env": {
         "GITHUB_PERSONAL_ACCESS_TOKEN": "..."
       }
+    },
+    "remote-server": {
+      "command": "mcpx",
+      "args": ["run", "--upstream", "https://mcp.example.com/mcp", "-H", "Authorization: Bearer sk-..."]
     }
   }
 }
@@ -66,7 +81,9 @@ That's it. One line change. mcpx handles the rest.
 ## CLI Commands
 
 ```bash
-mcpx run -- <command>        # Proxy mode (drop-in wrapper)
+mcpx run -- <command>        # Proxy a local MCP server (stdio)
+mcpx run --upstream <url>    # Proxy a remote MCP server (HTTP/SSE)
+mcpx run --upstream <url> -H "Header: value"  # With custom headers
 mcpx baselines list          # Show pinned baselines
 mcpx baselines show <name>   # Show baseline details
 mcpx baselines delete <name> # Re-pin on next connection
@@ -106,13 +123,12 @@ mcpx scans tool descriptions for:
 mcpx is built as a Rust workspace with focused crates:
 
 - **mcpx-core** — JSON-RPC 2.0 and MCP protocol types, snapshot capture
-- **mcpx-transport** — stdio bidirectional proxy, message pump
+- **mcpx-transport** — stdio and HTTP/SSE bidirectional proxy, message pump
 - **mcpx-schema** — recursive JSON Schema diffing, severity classification
 - **mcpx-poison** — structural similarity analysis, injection pattern detection
 - **mcpx-store** — SQLite storage for baselines, snapshots, audit logs
 - **mcpx-cli** — CLI binary with clap
 
-See [ARCHITECTURE.md](./ARCHITECTURE.md) for message flow, crate boundaries, data lifecycle, and extension guidelines.
 
 ## Extending mcpx
 
@@ -142,7 +158,7 @@ Starter feature ideas:
 ## Roadmap
 
 - [x] v0.1 — stdio proxy, auto-baseline, schema diffing, poisoning detection (levels 1+2), blocking
-- [ ] v0.2 — HTTP/SSE transport, auto-shimming (backwards-compatible request rewriting), CI export (JSON/SARIF)
+- [ ] v0.2 — ~~HTTP/SSE transport~~, auto-shimming (backwards-compatible request rewriting), CI export (JSON/SARIF)
 - [ ] v0.3 — semantic similarity (local embeddings), TUI dashboard, `mcpdiff` baseline format interop
 - [ ] v0.4 — multi-server composition, policy-as-code (TOML config), Homebrew tap
 
