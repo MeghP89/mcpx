@@ -77,7 +77,9 @@ impl ToolSnapshot {
     /// Quick check: has either input or output schema changed since this snapshot?
     pub fn schema_changed(&self, current: &ToolDefinition) -> bool {
         let input_canonical = canonicalize_json(&current.input_schema);
-        let input_hash = blake3::hash(input_canonical.as_bytes()).to_hex().to_string();
+        let input_hash = blake3::hash(input_canonical.as_bytes())
+            .to_hex()
+            .to_string();
 
         let output_canonical = canonicalize_json(
             current
@@ -85,7 +87,9 @@ impl ToolSnapshot {
                 .as_ref()
                 .unwrap_or(&serde_json::Value::Null),
         );
-        let output_hash = blake3::hash(output_canonical.as_bytes()).to_hex().to_string();
+        let output_hash = blake3::hash(output_canonical.as_bytes())
+            .to_hex()
+            .to_string();
 
         input_hash != self.schema_hash || output_hash != self.output_schema_hash
     }
