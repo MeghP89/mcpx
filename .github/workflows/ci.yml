@@ -81,15 +81,31 @@ jobs:
       - name: Build mcpx
         run: cargo build -p mcpx
 
-      - name: Run mcpx CI scan (SARIF)
+      - name: Run mcpx CI scan (clean SARIF for upload)
         run: |
           mkdir -p artifacts
           target/debug/mcpx ci scan \
             --baseline .github/ci/mcpx-baseline.json \
-            --target .github/ci/mcpx-target.json \
+            --target .github/ci/mcpx-target-clean.json \
             --format sarif \
             --out artifacts/mcpx-ci.sarif \
-            --fail-on blocked || true
+            --fail-on blocked
+
+      - name: Run mcpx CI scan (bad fixture smoke test)
+        run: |
+          set +e
+          target/debug/mcpx ci scan \
+            --baseline .github/ci/mcpx-baseline.json \
+            --target .github/ci/mcpx-target.json \
+            --format json \
+            --out artifacts/mcpx-ci-bad.json \
+            --fail-on blocked
+          code=$?
+          set -e
+          if [ "$code" -eq 0 ]; then
+            echo "Expected bad fixture scan to fail at blocked threshold, but it succeeded."
+            exit 1
+          fi
 
       - name: Upload SARIF
         uses: github/codeql-action/upload-sarif@v3
