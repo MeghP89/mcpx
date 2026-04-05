@@ -244,7 +244,7 @@ Starter feature ideas:
 ## Roadmap
 
 - [x] v0.1 — stdio proxy, auto-baseline, schema diffing, poisoning detection (levels 1+2), blocking
-- [ ] v0.2 — ~~HTTP/SSE transport~~, ~~auto-shimming (backwards-compatible request rewriting)~~, ~~CI export (JSON/SARIF)~~
+- [x] v0.2 — ~~HTTP/SSE transport~~, ~~auto-shimming (backwards-compatible request rewriting)~~, ~~CI export (JSON/SARIF)~~
 - [ ] v0.3 — ~~semantic similarity (local embeddings)~~, TUI dashboard, `mcpdiff` baseline format interop
 - [ ] v0.4 — multi-server composition, policy-as-code (TOML config), Homebrew tap
 
