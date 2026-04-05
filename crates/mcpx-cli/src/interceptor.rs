@@ -204,12 +204,21 @@ fn handle_tools_list(
                                     eprintln!("[mcpx]");
                                     eprintln!("[mcpx]   \x1b[1;31m✘ BLOCKED\x1b[0m  Tool '{}' — poisoning detected", d.tool_name);
                                     if !analysis.injection_patterns.is_empty() {
-                                        eprintln!("[mcpx]     Patterns:  {}", analysis.injection_patterns.join(", "));
+                                        eprintln!(
+                                            "[mcpx]     Patterns:  {}",
+                                            analysis.injection_patterns.join(", ")
+                                        );
                                     }
                                     if !analysis.hidden_chars.is_empty() {
-                                        eprintln!("[mcpx]     Hidden:    {}", analysis.hidden_chars.join(", "));
+                                        eprintln!(
+                                            "[mcpx]     Hidden:    {}",
+                                            analysis.hidden_chars.join(", ")
+                                        );
                                     }
-                                    eprintln!("[mcpx]     Structural similarity: {:.2}", analysis.structural_similarity);
+                                    eprintln!(
+                                        "[mcpx]     Structural similarity: {:.2}",
+                                        analysis.structural_similarity
+                                    );
                                     if let Some(sem) = analysis.semantic_similarity {
                                         eprintln!("[mcpx]     Semantic similarity:  {:.2}", sem);
                                     }
@@ -222,7 +231,10 @@ fn handle_tools_list(
                                 structural::Verdict::Suspicious => {
                                     eprintln!("[mcpx]");
                                     eprintln!("[mcpx]   \x1b[1;33m⚠ SUSPICIOUS\x1b[0m  Tool '{}' — description drift", d.tool_name);
-                                    eprintln!("[mcpx]     Structural similarity: {:.2}", analysis.structural_similarity);
+                                    eprintln!(
+                                        "[mcpx]     Structural similarity: {:.2}",
+                                        analysis.structural_similarity
+                                    );
                                     if let Some(sem) = analysis.semantic_similarity {
                                         eprintln!("[mcpx]     Semantic similarity:  {:.2}", sem);
                                     }
