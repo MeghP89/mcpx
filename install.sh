@@ -4,16 +4,18 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROFILE="release"
 PREFIX="${HOME}/.local"
+FEATURES=""
 
 usage() {
   cat <<'EOF'
 Install mcpx from this repository.
 
 Usage:
-  ./install.sh [--debug] [--prefix <dir>] [--help]
+  ./install.sh [--debug] [--ml] [--prefix <dir>] [--help]
 
 Options:
   --debug         Build debug binary instead of release
+  --ml            Enable Level 3 semantic similarity poisoning detection
   --prefix <dir>  Install prefix (binary goes to <dir>/bin/mcpx)
   --help          Show this help
 EOF
@@ -23,6 +25,10 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --debug)
       PROFILE="debug"
+      shift
+      ;;
+    --ml)
+      FEATURES="ml"
       shift
       ;;
     --prefix)
@@ -53,12 +59,17 @@ fi
 
 cd "${ROOT_DIR}"
 
-echo "Building mcpx (${PROFILE})..."
+FEATURE_FLAG=""
+if [[ -n "${FEATURES}" ]]; then
+  FEATURE_FLAG="--features ${FEATURES}"
+fi
+
+echo "Building mcpx (${PROFILE}${FEATURES:+, features: ${FEATURES}})..."
 if [[ "${PROFILE}" == "release" ]]; then
-  cargo build --release -p mcpx
+  cargo build --release -p mcpx ${FEATURE_FLAG}
   SOURCE_BIN="${ROOT_DIR}/target/release/mcpx"
 else
-  cargo build -p mcpx
+  cargo build -p mcpx ${FEATURE_FLAG}
   SOURCE_BIN="${ROOT_DIR}/target/debug/mcpx"
 fi
 

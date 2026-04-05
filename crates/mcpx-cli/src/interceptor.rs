@@ -201,19 +201,45 @@ fn handle_tools_list(
                             let analysis = structural::analyze(&d.tool_name, old, new, 0.85);
                             match analysis.verdict {
                                 structural::Verdict::Blocked => {
+                                    eprintln!("[mcpx]");
+                                    eprintln!("[mcpx]   \x1b[1;31m✘ BLOCKED\x1b[0m  Tool '{}' — poisoning detected", d.tool_name);
+                                    if !analysis.injection_patterns.is_empty() {
+                                        eprintln!(
+                                            "[mcpx]     Patterns:  {}",
+                                            analysis.injection_patterns.join(", ")
+                                        );
+                                    }
+                                    if !analysis.hidden_chars.is_empty() {
+                                        eprintln!(
+                                            "[mcpx]     Hidden:    {}",
+                                            analysis.hidden_chars.join(", ")
+                                        );
+                                    }
                                     eprintln!(
-                                        "[mcpx] - [BLOCKED] poisoning detected in tool '{}' | patterns={:?}",
-                                        d.tool_name, analysis.injection_patterns
+                                        "[mcpx]     Structural similarity: {:.2}",
+                                        analysis.structural_similarity
                                     );
+                                    if let Some(sem) = analysis.semantic_similarity {
+                                        eprintln!("[mcpx]     Semantic similarity:  {:.2}", sem);
+                                    }
+                                    eprintln!("[mcpx]     Old: \"{}\"", truncate_desc(old, 80));
+                                    eprintln!("[mcpx]     New: \"{}\"", truncate_desc(new, 80));
                                     if !state.blocked_tools.contains(&d.tool_name) {
                                         state.blocked_tools.push(d.tool_name.clone());
                                     }
                                 }
                                 structural::Verdict::Suspicious => {
+                                    eprintln!("[mcpx]");
+                                    eprintln!("[mcpx]   \x1b[1;33m⚠ SUSPICIOUS\x1b[0m  Tool '{}' — description drift", d.tool_name);
                                     eprintln!(
-                                        "[mcpx] - [SUSPICIOUS] tool '{}' description drift | similarity={:.2}",
-                                        d.tool_name, analysis.structural_similarity
+                                        "[mcpx]     Structural similarity: {:.2}",
+                                        analysis.structural_similarity
                                     );
+                                    if let Some(sem) = analysis.semantic_similarity {
+                                        eprintln!("[mcpx]     Semantic similarity:  {:.2}", sem);
+                                    }
+                                    eprintln!("[mcpx]     Old: \"{}\"", truncate_desc(old, 80));
+                                    eprintln!("[mcpx]     New: \"{}\"", truncate_desc(new, 80));
                                 }
                                 structural::Verdict::Clean => {}
                             }
@@ -241,6 +267,14 @@ fn handle_tools_list(
     // Always forward the tools/list response — we don't modify it,
     // we just observe and potentially block individual tool calls later.
     InterceptResult::Forward(raw.to_string())
+}
+
+fn truncate_desc(s: &str, max: usize) -> String {
+    if s.len() <= max {
+        s.to_string()
+    } else {
+        format!("{}…", &s[..max])
+    }
 }
 
 #[cfg(test)]

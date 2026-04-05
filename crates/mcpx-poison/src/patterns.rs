@@ -11,8 +11,10 @@ static INJECTION_PATTERNS: LazyLock<Vec<(Regex, &'static str)>> = LazyLock::new(
          "behavioral directive"),
         (Regex::new(r"(?i)before\s+(executing|running|calling|using)\s*(this)?\s*(tool)?.*\s*(read|send|include|attach|forward|copy)").unwrap(),
          "pre-execution data exfiltration"),
-        (Regex::new(r"(?i)(read|access|send|exfiltrate|copy|forward|upload)\s+.*(ssh|key|token|password|credential|secret|env|\.env|id_rsa|private)").unwrap(),
+        (Regex::new(r"(?i)(read|access|send|exfiltrate|copy|forward|upload|return|retrieve|fetch|get|extract|dump|expose|leak|output|include)\s+.*(ssh|key|token|password|credential|secret|env|\.env|id_rsa|private)").unwrap(),
          "credential access attempt"),
+        (Regex::new(r"(?i)(credential|password|secret|private.key|ssh.key|api.key|access.token|auth.token)s?(\s|$|[,;.])").unwrap(),
+         "sensitive data reference in description"),
 
         // Exfiltration patterns
         (Regex::new(r"(?i)(send|post|forward|upload|transmit)\s+.*(to|http|url|endpoint|server|webhook)").unwrap(),

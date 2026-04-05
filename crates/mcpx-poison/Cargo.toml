@@ -5,7 +5,11 @@ edition.workspace = true
 license.workspace = true
 description = "Tool description poisoning detection for MCP servers"
 
+[features]
+ml = ["mcpx-poison-ml"]
+
 [dependencies]
+mcpx-poison-ml = { path = "../mcpx-poison-ml", optional = true }
 mcpx-core = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
