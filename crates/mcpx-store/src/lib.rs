@@ -133,19 +133,19 @@ impl Store {
         Ok(())
     }
 
-    /// Record an audit event.
+    /// Record an audit event. Returns the event ID.
     pub fn record_event(
         &self,
         server_name: &str,
         event_type: &str,
         detail: Option<&serde_json::Value>,
-    ) -> Result<()> {
+    ) -> Result<i64> {
         let detail_json = detail.map(|d| serde_json::to_string(d).unwrap_or_default());
         self.conn.execute(
             "INSERT INTO events (server_name, event_type, detail_json, created_at) VALUES (?1, ?2, ?3, ?4)",
             rusqlite::params![server_name, event_type, detail_json, Utc::now().to_rfc3339()],
         )?;
-        Ok(())
+        Ok(self.conn.last_insert_rowid())
     }
 
     /// List recent audit events for a server, newest first.

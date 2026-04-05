@@ -10,6 +10,17 @@ use tracing::{debug, info};
 use crate::http;
 use crate::stdio;
 
+/// Why a tool was blocked — attached to the JSON-RPC error for transparency.
+#[derive(Debug, Clone)]
+pub struct BlockReason {
+    /// Machine-readable reason code.
+    pub code: &'static str,
+    /// Human-readable explanation.
+    pub message: String,
+    /// Audit event ID in the mcpx store (if recorded).
+    pub event_id: Option<i64>,
+}
+
 /// Tracks state needed by the interceptor across the proxy lifetime.
 pub struct ProxyState {
     /// Map of pending request IDs to their method names.
@@ -19,8 +30,8 @@ pub struct ProxyState {
     pub server_info: Option<InitializeResult>,
     /// The pinned baseline (loaded from DB or captured on first `tools/list`).
     pub baseline: Option<Vec<ToolSnapshot>>,
-    /// Tools that have been flagged as having breaking changes.
-    pub blocked_tools: Vec<String>,
+    /// Tools that have been blocked, with the reason for each.
+    pub blocked_tools: HashMap<String, BlockReason>,
     /// Whether the baseline has been set (first connection complete).
     pub baseline_pinned: bool,
 }
@@ -31,7 +42,7 @@ impl ProxyState {
             pending_requests: HashMap::new(),
             server_info: None,
             baseline: None,
-            blocked_tools: Vec::new(),
+            blocked_tools: HashMap::new(),
             baseline_pinned: false,
         }
     }
