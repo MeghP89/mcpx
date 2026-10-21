@@ -100,7 +100,11 @@ pub async fn run_stdio_proxy(
     loop {
         tokio::select! {
             // Message from client → intercept → forward to server
-            Some(msg) = client_rx.recv() => {
+            msg = client_rx.recv() => {
+                let Some(msg) = msg else {
+                    debug!("Client disconnected, exiting");
+                    break;
+                };
                 let mut st = state.lock().await;
 
                 // Track request IDs so we can identify responses.
@@ -176,7 +180,11 @@ pub async fn run_http_proxy(
     loop {
         tokio::select! {
             // Message from client → intercept → forward to server
-            Some(msg) = client_rx.recv() => {
+            msg = client_rx.recv() => {
+                let Some(msg) = msg else {
+                    debug!("Client disconnected, exiting");
+                    break;
+                };
                 let mut st = state.lock().await;
 
                 // Track request IDs so we can identify responses.
