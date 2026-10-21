@@ -1,4 +1,5 @@
 use anyhow::{Context, Result};
+use std::io::{BufRead, Write};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, Command};
 use tokio::sync::mpsc;
@@ -46,12 +47,9 @@ impl StdioTransport {
                     bytes = msg.len(),
                     "writing to server stdin"
                 );
-                if let Err(e) = stdin.write_all(msg.as_bytes()).await {
+                let line = format!("{msg}\n");
+                if let Err(e) = stdin.write_all(line.as_bytes()).await {
                     error!("Failed to write to server stdin: {}", e);
-                    break;
-                }
-                if let Err(e) = stdin.write_all(b"\n").await {
-                    error!("Failed to write newline to server stdin: {}", e);
                     break;
                 }
                 if let Err(e) = stdin.flush().await {
@@ -123,36 +121,29 @@ impl StdioTransport {
 pub fn read_client_stdin() -> mpsc::Receiver<String> {
     let (tx, rx) = mpsc::channel::<String>(256);
 
-    tokio::spawn(async move {
-        let stdin = tokio::io::stdin();
-        let reader = BufReader::new(stdin);
-        let mut lines = reader.lines();
-        loop {
-            match lines.next_line().await {
-                Ok(Some(line)) => {
-                    if line.trim().is_empty() {
-                        continue;
-                    }
-                    trace!(
-                        direction = "←client",
-                        bytes = line.len(),
-                        "read from client stdin"
-                    );
-                    if tx.send(line).await.is_err() {
-                        debug!("Client stdin reader: receiver dropped");
-                        break;
-                    }
-                }
-                Ok(None) => {
-                    debug!("Client stdin closed (EOF)");
-                    break;
-                }
+    std::thread::spawn(move || {
+        for line in std::io::stdin().lock().lines() {
+            let line = match line {
+                Ok(line) => line,
                 Err(e) => {
                     error!("Error reading client stdin: {}", e);
                     break;
                 }
+            };
+            if line.trim().is_empty() {
+                continue;
+            }
+            trace!(
+                direction = "←client",
+                bytes = line.len(),
+                "read from client stdin"
+            );
+            if tx.blocking_send(line).is_err() {
+                debug!("Client stdin reader: receiver dropped");
+                break;
             }
         }
+        debug!("Client stdin closed (EOF)");
     });
 
     rx
@@ -160,16 +151,9 @@ pub fn read_client_stdin() -> mpsc::Receiver<String> {
 
 /// Write a JSON-RPC message to our own stdout (back to the client).
 pub async fn write_client_stdout(msg: &str) -> Result<()> {
-    let mut stdout = tokio::io::stdout();
-    stdout
-        .write_all(msg.as_bytes())
-        .await
-        .context("Failed to write to stdout")?;
-    stdout
-        .write_all(b"\n")
-        .await
-        .context("Failed to write newline to stdout")?;
-    stdout.flush().await.context("Failed to flush stdout")?;
+    let mut stdout = std::io::stdout().lock();
+    writeln!(stdout, "{msg}").context("Failed to write to stdout")?;
+    stdout.flush().context("Failed to flush stdout")?;
     Ok(())
 }
 

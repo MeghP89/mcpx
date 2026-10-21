@@ -203,6 +203,23 @@ mcpx ci scan \
 
 SARIF results include rule metadata and physical locations (artifact URI + line) so code scanning systems can render actionable alerts.
 
+## Performance
+
+Round trip for a `tools/call` against a local echo server (`bench/`), 20K calls:
+
+| | p50 | p99 | calls/s |
+|---|---|---|---|
+| direct | 25 µs | 100 µs | ~32K |
+| mcpx (before) | 110 µs | 260 µs | ~8.5K |
+| mcpx | 36 µs | 98 µs | ~24K |
+
+mcpx runs on a single threaded tokio runtime and reads/writes client stdio from a dedicated thread, so each message avoids the cross thread wakeups and blocking pool hops that made up most of the old overhead.
+
+```bash
+python3 bench/client.py 20000 python3 bench/echo_server.py
+python3 bench/client.py 20000 mcpx run -- python3 bench/echo_server.py
+```
+
 ## Architecture
 
 mcpx is built as a Rust workspace with focused crates:
